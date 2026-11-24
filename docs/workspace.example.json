@@ -1,0 +1,85 @@
+{
+  "product": {
+    "id": "product-1",
+    "name": "GeoFlow",
+    "description": "Site analysis software for US renewable energy developers.",
+    "capabilities": ["Compare proposed sites and interconnection constraints"],
+    "constraints": ["US markets"],
+    "customers_and_wins": ["Mid-market solar developers"],
+    "pricing": "Per development team",
+    "contract_value": null
+  },
+  "icp": {
+    "revision": 2,
+    "approved": true,
+    "fields": {
+      "industries": ["Renewable energy project development"],
+      "geography": ["United States"],
+      "headcount_band": "50–500",
+      "revenue_band": null,
+      "buyer_titles": ["Director of Project Development"],
+      "seniority": ["Director"],
+      "triggers": ["Recent utility-scale project announcement"],
+      "exclusions": ["Develops projects exclusively outside the US"]
+    },
+    "confidence": {"industries": 0.9, "geography": 1, "headcount_band": 0.6, "revenue_band": 0, "buyer_titles": 0.8, "seniority": 0.7, "triggers": 0.8, "exclusions": 0.9},
+    "expansion": null,
+    "expansion_decision": "dismiss",
+    "updated_at": "2026-11-24T18:00:00Z"
+  },
+  "approved_icp_revision": 2,
+  "accounts": [
+    {
+      "id": "acct-example",
+      "name": "Example Energy",
+      "domain": "energy.example.com",
+      "industry": "Renewable energy",
+      "company_size": "50–500",
+      "geography": "United States",
+      "buyer_role": "Director of Project Development",
+      "fit_score": 100,
+      "intent_score": 100,
+      "tier": "A",
+      "recommendation": "contact",
+      "reason": "Public project announcement indicates site evaluation work.",
+      "researched_at": "2026-11-24T18:03:00Z",
+      "icp_revision": 2,
+      "evidence": [
+        {"id": "ev-example", "url": "https://energy.example.com/news/site", "title": "Site studies announced", "excerpt": "Example Energy announced site studies for a 200 MW solar project.", "source_type": "company", "published_at": "2026-11-10"}
+      ],
+      "signal": {"id": "signal-example", "kind": "direct", "summary": "Site studies for a 200 MW solar project", "occurred_on": "2026-11-10", "evidence_id": "ev-example"},
+      "negative_signal": null,
+      "graph_path": [
+        {"id": "product-1", "label": "Product", "name": "GeoFlow", "relationship": "MATCHED_TO", "evidence_id": null},
+        {"id": "acct-example", "label": "Company", "name": "Example Energy", "relationship": "HAS_SIGNAL", "evidence_id": "ev-example"},
+        {"id": "signal-example", "label": "Signal", "name": "Site studies for a 200 MW solar project", "relationship": null, "evidence_id": "ev-example"}
+      ],
+      "enrichment_status": "verified",
+      "contact": {"id": "contact-example", "role": "Director of Project Development", "email_masked": "•••@energy.example.com", "verification_status": "valid", "mx_valid": null, "headquarters": null, "linkedin_url": null},
+      "draft": {
+        "id": "draft-example",
+        "account_id": "acct-example",
+        "revision": 2,
+        "subject": "Comparing sites for your solar project",
+        "body": "I saw your announcement about site studies for a 200 MW solar project. GeoFlow helps development teams compare sites and interconnection constraints. Would a quick walkthrough be useful?",
+        "test_recipient": "demo@example.com",
+        "evidence_ids": ["ev-example"],
+        "role_based": false,
+        "review_status": "approved",
+        "dispatch_status": "not_sent",
+        "updated_at": "2026-11-24T18:10:00Z"
+      }
+    }
+  ],
+  "competitor": {"name": "Example Siting", "positioning": "Site screening for project developers", "differentiator": "Public positioning emphasizes screening workflows", "pricing": null, "evidence": [{"id":"ev-competitor","url":"https://siting.example.com/product","title":"Product overview","excerpt":"Site screening for project developers.","source_type":"company","published_at":null}]},
+  "activity": [{"id": "event-example", "type": "draft_approved", "actor": "demo", "at": "2026-11-24T18:10:00Z", "account_id": "acct-example", "draft_id": "draft-example", "revision": 2, "message": "The current draft revision was approved."}],
+  "pipeline": {
+    "leads": [{"account_id":"acct-example","company":"Example Energy","role":"Director of Project Development","fit_score":100,"stage":"matched","test_send":false,"actor":"system","updated_at":"2026-11-24T18:03:00Z","next_action":"Send the approved demo email"}],
+    "events": [],
+    "counts": {"matched":1,"contacted":0,"replied":0,"meeting_booked":0,"closed_lost":0},
+    "enriched_count": 1,
+    "pending_approval_count": 0,
+    "matched_to_contacted_rate": 0
+  },
+  "usage": null
+}
