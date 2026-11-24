@@ -218,6 +218,18 @@ export interface IcpGenerateInput {
   contract_value: string | null;
 }
 
+export type IntakeFields = { [Key in keyof IcpGenerateInput]?: IcpGenerateInput[Key] | null };
+
+export interface IntakeMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface IntakeReply {
+  reply: string;
+  proposal: IntakeFields;
+}
+
 export interface IcpApproveInput {
   revision: number;
   fields: IcpFields;

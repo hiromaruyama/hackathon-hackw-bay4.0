@@ -39,6 +39,35 @@ class Product(ProductInput):
     id: str
 
 
+class IntakeFields(InputModel):
+    name: ShortText | None = None
+    description: Description | None = None
+    capabilities: TextList | None = None
+    constraints: TextList | None = None
+    customers_and_wins: TextList | None = None
+    pricing: ShortText | None = None
+    contract_value: ShortText | None = None
+
+
+IntakeText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+
+class IntakeMessage(InputModel):
+    role: Literal['user', 'assistant']
+    text: IntakeText
+
+
+class IntakeChat(InputModel):
+    product: IntakeFields = Field(default_factory=IntakeFields)
+    history: list[IntakeMessage] = Field(default_factory=list, max_length=12)
+    message: IntakeText
+
+
+class IntakeReply(InputModel):
+    reply: IntakeText
+    proposal: IntakeFields = Field(default_factory=IntakeFields)
+
+
 class IcpFields(InputModel):
     industries: TextList = Field(default_factory=list)
     geography: TextList = Field(default_factory=list)

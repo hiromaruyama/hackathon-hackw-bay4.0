@@ -2,15 +2,17 @@
 
 import { useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { IntakeChat } from "@/components/intake-chat";
 import { InlineAlert, Panel, PanelHeader } from "@/components/signal";
 import { Button } from "@/components/ui/button";
+import { Field as FormField, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useWorkspace } from "@/lib/workspace-context";
 import { dateTime } from "@/lib/format";
-import type { ExpansionDecision, IcpFieldKey, IcpFields } from "@/lib/types";
+import type { ExpansionDecision, IcpFieldKey, IcpFields, IntakeFields } from "@/lib/types";
 import type { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +82,7 @@ function Profile() {
   });
   const [intakeError, setIntakeError] = useState<string | null>(null);
   const [genError, setGenError] = useState<ApiError | null>(null);
+  const [intakeTab, setIntakeTab] = useState("form");
 
   const icp = w.icp;
   const [fields, setFields] = useState<FieldDraft | null>(icp ? toDraft(icp.fields) : null);
@@ -97,24 +100,40 @@ function Profile() {
   }
 
   const dirty = icp && fields ? JSON.stringify(fromDraft(fields)) !== JSON.stringify(icp.fields) : false;
+  const intakeValues = {
+    name: intake.name.trim() || "GeoFlow",
+    description: intake.description.trim(),
+    capabilities: lines(intake.capabilities),
+    constraints: lines(intake.constraints),
+    customers_and_wins: lines(intake.customers),
+    pricing: intake.pricing.trim() || null,
+    contract_value: intake.contract.trim() || null,
+  };
 
   async function onGenerate(e: React.FormEvent) {
     e.preventDefault();
-    if (!intake.description.trim()) {
+    if (!intakeValues.description) {
       setIntakeError("Describe what you sell first.");
       return;
     }
     setGenError(null);
-    const res = await generateIcp({
-      name: intake.name.trim() || "GeoFlow",
-      description: intake.description.trim(),
-      capabilities: lines(intake.capabilities),
-      constraints: lines(intake.constraints),
-      customers_and_wins: lines(intake.customers),
-      pricing: intake.pricing.trim() || null,
-      contract_value: intake.contract.trim() || null,
-    });
+    const res = await generateIcp(intakeValues);
     if (!res.ok) setGenError(res.error ?? null);
+  }
+
+  function applyIntake(proposal: IntakeFields) {
+    setIntake((current) => ({
+      name: proposal.name ?? current.name,
+      description: proposal.description ?? current.description,
+      capabilities: proposal.capabilities ? join(proposal.capabilities) : current.capabilities,
+      constraints: proposal.constraints ? join(proposal.constraints) : current.constraints,
+      customers: proposal.customers_and_wins ? join(proposal.customers_and_wins) : current.customers,
+      pricing: proposal.pricing ?? current.pricing,
+      contract: proposal.contract_value ?? current.contract,
+    }));
+    setIntakeError(null);
+    setGenError(null);
+    setIntakeTab("form");
   }
 
   async function onApprove() {
@@ -143,49 +162,60 @@ function Profile() {
             ? icp.approved
               ? `Revision ${icp.revision} approved ${dateTime(icp.updated_at)}. Discovery uses this revision.`
               : `Revision ${icp.revision} is a draft. Edit anything, then approve it to find accounts.`
-            : "Describe what you sell. Signal proposes a profile you can edit before anything is searched."}
+            : "Describe what you sell in chat or in the form. Review the proposed profile before discovering accounts."}
         </p>
       </div>
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <Panel aria-labelledby="intake-title">
           <PanelHeader title="What you sell" id="intake-title" />
-          <form onSubmit={onGenerate} className="flex flex-col gap-4">
-            <Field id="name" label="Product name">
-              <Input id="name" value={intake.name} onChange={set("name")} />
-            </Field>
-            <Field id="description" label="Description" error={intakeError}>
-              <Textarea id="description" rows={3} value={intake.description} onChange={set("description")} aria-invalid={intakeError ? true : undefined} placeholder="Site analysis software for US renewable energy developers." />
-            </Field>
-            <Field id="capabilities" label="Capabilities" hint="One per line">
-              <Textarea id="capabilities" rows={3} value={intake.capabilities} onChange={set("capabilities")} />
-            </Field>
-            <Field id="constraints" label="Constraints" hint="One per line">
-              <Textarea id="constraints" rows={2} value={intake.constraints} onChange={set("constraints")} />
-            </Field>
-            <Field id="customers" label="Customers and wins" hint="One per line">
-              <Textarea id="customers" rows={2} value={intake.customers} onChange={set("customers")} />
-            </Field>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field id="pricing" label="Pricing">
-                <Input id="pricing" value={intake.pricing} onChange={set("pricing")} />
-              </Field>
-              <Field id="contract" label="Contract value">
-                <Input id="contract" value={intake.contract} onChange={set("contract")} />
-              </Field>
-            </div>
-            {genError ? (
-              <InlineAlert tone="danger" title="The profile wasn't generated">
-                {genError.message}
-              </InlineAlert>
-            ) : null}
-            <div className="flex justify-end">
-              <Button type="submit" variant={icp ? "outline" : "default"} className="h-10 font-semibold" disabled={pending === "icp-generate"}>
-                {pending === "icp-generate" ? <Spinner /> : null}
-                {pending === "icp-generate" ? "Generating…" : icp ? "Generate a new revision" : "Generate profile"}
-              </Button>
-            </div>
-          </form>
+          <Tabs value={intakeTab} onValueChange={setIntakeTab} className="gap-4">
+            <TabsList aria-label="Product intake">
+              <TabsTrigger value="form">Form</TabsTrigger>
+              <TabsTrigger value="chat">Intake chat</TabsTrigger>
+            </TabsList>
+            <TabsContent value="chat" forceMount className="data-[state=inactive]:hidden">
+              <IntakeChat product={{ ...intakeValues, description: intakeValues.description || null }} onApply={applyIntake} />
+            </TabsContent>
+            <TabsContent value="form">
+              <form onSubmit={onGenerate}>
+                <FieldGroup className="gap-4">
+                  <Field id="name" label="Product name">
+                    <Input id="name" value={intake.name} onChange={set("name")} maxLength={250} />
+                  </Field>
+                  <Field id="description" label="Description" error={intakeError}>
+                    <Textarea id="description" rows={3} value={intake.description} onChange={set("description")} aria-invalid={intakeError ? true : undefined} aria-describedby={intakeError ? "description-error" : undefined} maxLength={4000} placeholder="Site analysis software for US renewable energy developers." />
+                  </Field>
+                  <Field id="capabilities" label="Capabilities" hint="One per line">
+                    <Textarea id="capabilities" rows={3} value={intake.capabilities} onChange={set("capabilities")} />
+                  </Field>
+                  <Field id="constraints" label="Constraints" hint="One per line">
+                    <Textarea id="constraints" rows={2} value={intake.constraints} onChange={set("constraints")} />
+                  </Field>
+                  <Field id="customers" label="Customers and wins" hint="One per line">
+                    <Textarea id="customers" rows={2} value={intake.customers} onChange={set("customers")} />
+                  </Field>
+                  <FieldGroup className="grid gap-4 sm:grid-cols-2">
+                    <Field id="pricing" label="Pricing">
+                      <Input id="pricing" value={intake.pricing} onChange={set("pricing")} maxLength={250} />
+                    </Field>
+                    <Field id="contract" label="Contract value">
+                      <Input id="contract" value={intake.contract} onChange={set("contract")} maxLength={250} />
+                    </Field>
+                  </FieldGroup>
+                  {genError ? (
+                    <InlineAlert tone="danger" title="The profile wasn't generated">
+                      {genError.message}
+                    </InlineAlert>
+                  ) : null}
+                  <Button type="submit" variant={icp ? "outline" : "default"} className="self-end" disabled={pending === "icp-generate"}>
+                    {pending === "icp-generate" ? <Spinner data-icon="inline-start" /> : null}
+                    {pending === "icp-generate" ? "Generating…" : icp ? "Generate a new revision" : "Generate profile"}
+                  </Button>
+                </FieldGroup>
+              </form>
+            </TabsContent>
+          </Tabs>
         </Panel>
 
         <Panel aria-labelledby="icp-title">
@@ -278,17 +308,17 @@ function Profile() {
 
 function Field({ id, label, hint, error, aside, children }: { id: string; label: string; hint?: string; error?: string | null; aside?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <FormField className="gap-1.5" data-invalid={Boolean(error) || undefined}>
       <div className="flex items-baseline justify-between gap-2">
-        <Label htmlFor={id}>{label}</Label>
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
         {aside}
       </div>
       {children}
       {error ? (
-        <p role="alert" className="text-sm text-destructive">{error}</p>
+        <FieldError id={`${id}-error`}>{error}</FieldError>
       ) : hint ? (
-        <p className="text-[13px] text-muted-foreground">{hint}</p>
+        <FieldDescription>{hint}</FieldDescription>
       ) : null}
-    </div>
+    </FormField>
   );
 }

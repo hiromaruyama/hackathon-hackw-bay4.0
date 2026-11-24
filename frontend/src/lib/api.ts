@@ -1,4 +1,4 @@
-import type { IcpApproveInput, IcpGenerateInput, Workspace } from "./types";
+import type { IcpApproveInput, IcpGenerateInput, IntakeFields, IntakeMessage, IntakeReply, Workspace } from "./types";
 
 // Same origin in production. For local dev against uvicorn, set NEXT_PUBLIC_API_BASE=http://localhost:8000
 // and make the backend's SIGNAL_PUBLIC_ORIGIN match the Next dev origin.
@@ -40,6 +40,8 @@ export const api = {
   signIn: (password: string) => request<{ actor: string }>("POST", "/api/session", { password }),
   signOut: () => request<void>("DELETE", "/api/session"),
   workspace: () => request<Workspace>("GET", "/api/workspace"),
+  intakeChat: (product: IntakeFields, history: IntakeMessage[], message: string) =>
+    request<IntakeReply>("POST", "/api/intake/chat", { product, history, message }),
   generateIcp: (input: IcpGenerateInput) => request<Workspace>("POST", "/api/icp/generate", input),
   approveIcp: (input: IcpApproveInput) => request<Workspace>("POST", "/api/icp/approve", input),
   discover: (revision: number, refresh = false) =>

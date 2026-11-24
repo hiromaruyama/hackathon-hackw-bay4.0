@@ -12,8 +12,12 @@ from starlette.staticfiles import StaticFiles
 
 from .config import Settings
 from .errors import SignalError
-from .models import ApproveIcp, DiscoverInput, EditDraft, InputModel, ProductInput, ReviewDraft, RevisionInput, Workspace
+from .models import (
+    ApproveIcp, DiscoverInput, EditDraft, InputModel, IntakeChat, IntakeReply, ProductInput,
+    ReviewDraft, RevisionInput, Workspace,
+)
 from .providers import Providers
+from .research import guide_intake
 from .store import Neo4jStore
 from .workflow import Workflow
 
@@ -123,6 +127,10 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     @app.get('/api/workspace')
     def workspace(actor: Actor) -> Workspace:
         return workflow.workspace()
+
+    @app.post('/api/intake/chat')
+    def intake_chat(body: IntakeChat, actor: Actor) -> IntakeReply:
+        return guide_intake(providers, body)
 
     @app.post('/api/icp/generate')
     def generate_icp(body: ProductInput, actor: Actor) -> Workspace:

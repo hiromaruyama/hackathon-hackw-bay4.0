@@ -14,6 +14,7 @@ All workspace and readiness routes require a demo session. Sign in with `POST /a
 | `DELETE /api/session` | — | `204` and an expired cookie |
 | `GET /api/readiness` | — | Per-provider configuration flags and connectivity status for Neo4j |
 | `GET /api/workspace` | — | `Workspace` |
+| `POST /api/intake/chat` | `{"product":{},"history":[],"message":"We sell site analysis to U.S. solar developers."}` | A short `reply` and a `proposal` of editable product form values. |
 | `POST /api/icp/generate` | `{"description":"…","name":"GeoFlow","capabilities":[],"constraints":[],"customers_and_wins":[],"pricing":null,"contract_value":null}` | Workspace with a proposed ICP |
 | `POST /api/icp/approve` | `{"revision":1,"fields":{"industries":["Renewable energy"],"geography":["United States"],"headcount_band":null,"revenue_band":null,"buyer_titles":["Project Development Director"],"seniority":[],"triggers":[],"exclusions":[]},"expansion_decision":"dismiss"}` | Workspace with a new approved revision. `expansion_decision` is `accept`, `edit`, or `dismiss`. For `edit` include `expansion_segment`. |
 | `POST /api/discover` | `{"revision":2}` and optional `"refresh":true` | Workspace with up to three current accounts, graph paths, and a competitor when evidence supports one. Repeated requests use saved results for the approved revision unless refresh is explicit. If extraction fails, retry with the same revision to use the saved sources. |
@@ -27,5 +28,7 @@ Fields that may be absent are documented as `null` in the example. Scores are in
 The example response includes a successful credit check and accepted enrichment and graph events. When Flexprice is enabled, `usage` contains `balance` (last provider reading), `available_for_enrichment` (remaining demo allowance), `enrichment_cost`, `checked_at`, `status`, and `events`. With Flexprice disabled, `usage` is `null`. Events provide `id`, `account_id`, `operation`, `units`, `status`, and `at`. A blocked lookup returns `402` with code `insufficient_enrichment_credits`. Refresh `GET /api/workspace` to show the persisted credit check and event.
 
 An ICP `expansion` has `segment`, `reason`, and one `evidence` object. An account's `negative_signal` has `reason`, `evidence_id`, and `hard_exclusion`. Its cited source is in the account's `evidence` list. A positive `signal` has its own `id`, `summary`, and `occurred_on`.
+
+Intake history accepts up to 12 `{role, text}` entries with `user` or `assistant` roles. Each message accepts up to 2,000 characters. The proposal uses the product intake fields and returns `null` for unknown or unchanged values. Chat suggests local form updates. Generating and approving an ICP still use the two ICP routes. The chat route calls only Claude and leaves workspace state untouched.
 
 Errors use `{"error":{"code":"…","message":"…"}}`. Handle `401` by opening sign-in, `409` by refreshing the workspace, and `422` by checking inputs. Show a retryable message for dependency failures. A send with `pending_outcome` needs manual verification and stays locked. A repeated send for that revision reads the saved attempt. It never sends again.
