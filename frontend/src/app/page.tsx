@@ -55,7 +55,7 @@ function Home() {
           <h1 id="next" className="text-[22px] leading-tight font-bold">
             {next.title}
           </h1>
-          <p className="max-w-[62ch] text-[#4a4c47]">{next.detail}</p>
+          <p className="max-w-[62ch] text-ink-2">{next.detail}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {next.secondary ? (
@@ -215,7 +215,7 @@ function Workflow({ w }: { w: Workspace }) {
                 {s.state === "warn" ? <AlertTriangle aria-label="Needs attention" className="size-[18px] text-warning" /> : null}
                 {s.state === "locked" ? <Lock aria-label="Locked" className="size-4 text-muted-foreground" /> : null}
               </span>
-              <span className={cn("font-semibold", s.state === "locked" && "text-[#4a4c47]")}>{s.title}</span>
+              <span className={cn("font-semibold", s.state === "locked" && "text-ink-2")}>{s.title}</span>
               <span className="text-sm text-muted-foreground">{s.detail}</span>
             </>
           );

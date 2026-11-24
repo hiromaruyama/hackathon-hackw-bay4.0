@@ -77,7 +77,7 @@ function Accounts() {
       {!approved ? (
         <Panel className="flex flex-col items-start gap-2 py-10">
           <span className="text-lg font-bold">Approve a customer profile to find accounts</span>
-          <span className="max-w-[56ch] text-[#4a4c47]">Signal searches only for companies that match an approved profile.</span>
+          <span className="max-w-[56ch] text-ink-2">Signal searches only for companies that match an approved profile.</span>
           <Button asChild className="mt-2 h-10 font-semibold">
             <Link href="/profile/">Open customer profile</Link>
           </Button>
@@ -98,7 +98,7 @@ function Accounts() {
       ) : w.accounts.length === 0 ? (
         <Panel className="flex flex-col items-start gap-2 py-10">
           <span className="text-lg font-bold">No accounts yet</span>
-          <span className="max-w-[56ch] text-[#4a4c47]">Find up to three companies that match profile revision {approved}, each with the sources behind its score.</span>
+          <span className="max-w-[56ch] text-ink-2">Find up to three companies that match profile revision {approved}, each with the sources behind its score.</span>
           <Button className="mt-2 h-10 font-semibold" onClick={() => run(false)}>
             <Search /> Find accounts
           </Button>
