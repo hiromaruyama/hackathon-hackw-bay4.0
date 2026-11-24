@@ -32,7 +32,7 @@ Open [Signal on localhost](http://localhost:8000) and sign in. On the Profile pa
 
 Set Render secrets through the service's environment settings. The Blueprint uses free Docker compute, the `/api/health` endpoint, and a daily research interval. Set `SIGNAL_RENDER_URL` as a GitHub Actions repository variable to wake a sleeping free service for its scheduled research. Give judges the demo password privately.
 
-The expanded workflow was browser-tested against FastAPI and Neo4j with simulated provider responses. Separate live tests confirmed cited discovery and enrichment, one approved Gmail message in the controlled inbox, Gmail metadata access, Nexla citations, and all three Flexprice Sandbox meters. LinkedIn uses an approved manual handoff to a configured test profile while messaging access is pending. [Release checks](https://github.com/hiromaruyama/hackathon-hackw-bay4.0/actions/runs/45485778785)
+The expanded workflow was browser-tested against FastAPI and Neo4j with simulated provider responses. Separate live tests confirmed cited discovery and enrichment, one approved Gmail message in the controlled inbox, a signed Gmail Pub/Sub notification accepted by the hosted app, Nexla citations, and all three Flexprice Sandbox meters. LinkedIn uses an approved manual handoff to a configured test profile while messaging access is pending. [Release checks](https://github.com/hiromaruyama/hackathon-hackw-bay4.0/actions/runs/45497519171)
 
 
 ### Snyk CI
