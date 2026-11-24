@@ -79,14 +79,14 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
   }
 
   const dirty = subject !== draft.subject || body !== draft.body;
-  const unresolved = draft.dispatch_status === "pending_outcome";
+  const editable = draft.dispatch_status === "not_sent";
   const sent = draft.dispatch_status === "sent";
   const busy = pending !== null;
 
-  const canSave = dirty && !unresolved && subject.trim().length > 0 && body.trim().length > 0;
-  const canApprove = !dirty && draft.review_status !== "approved" && draft.dispatch_status === "not_sent";
-  const canReject = !dirty && draft.review_status !== "rejected" && draft.dispatch_status === "not_sent";
-  const canSend = !dirty && draft.review_status === "approved" && draft.dispatch_status === "not_sent";
+  const canSave = editable && dirty && subject.trim().length > 0 && body.trim().length > 0;
+  const canApprove = editable && !dirty && draft.review_status !== "approved";
+  const canReject = editable && !dirty && draft.review_status !== "rejected";
+  const canSend = editable && !dirty && draft.review_status === "approved" && Boolean(draft.test_recipient);
 
   const cited = account.evidence.filter((e) => draft.evidence_ids.includes(e.id));
   const draftEvents = workspace!.activity.filter((e) => e.draft_id === draft.id || e.account_id === account.id);
@@ -101,6 +101,10 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
   }
 
   async function applySuggestion(before: string, after: string) {
+    if (!editable) {
+      setError(new ApiError(0, "dispatch_already_reserved", "The draft is locked because a send was already reserved."));
+      return false;
+    }
     if (dirty) {
       setError(new ApiError(0, "unsaved", "Save or undo your own edits before applying a suggestion."));
       return false;
@@ -154,7 +158,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
             <div className="flex flex-col gap-0.5 bg-subtle px-[18px] py-3.5">
               <span className="text-[13px] text-muted-foreground">This email actually goes to</span>
               <span className="font-semibold">Controlled test inbox</span>
-              <span className="text-ink-2">{draft.test_recipient}</span>
+              <span className="text-ink-2">{draft.test_recipient ?? "Test inbox setup needed"}</span>
               <span className="text-[13px] text-muted-foreground">Set on the server. The prospect never receives it.</span>
             </div>
           </div>
@@ -182,7 +186,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
               <Input
                 id="subject"
                 value={subject}
-                disabled={unresolved}
+                disabled={!editable}
                 onChange={(e) => setSubject(e.target.value)}
                 className="h-auto border-0 bg-transparent p-0 font-serif text-lg font-semibold shadow-none focus-visible:ring-0 dark:bg-transparent"
               />
@@ -192,7 +196,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
               <Textarea
                 id="body"
                 value={body}
-                disabled={unresolved}
+                disabled={!editable}
                 onChange={(e) => setBody(e.target.value)}
                 rows={Math.max(10, body.split("\n").length + 2)}
                 className="max-w-[660px] resize-y border-0 bg-transparent p-0 font-serif text-[17px] leading-[1.65] text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
@@ -233,10 +237,9 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
               variant={canSend ? "default" : "outline"}
               className={cn("h-10 font-semibold", !canSend && "border-dashed")}
               disabled={!canSend || busy}
-              title={canSend ? undefined : sent ? "Already sent" : "Approve the current revision first"}
               onClick={() => setConfirmOpen(true)}
             >
-              {pending === "send" ? <Spinner /> : canSend ? <Send /> : <Lock />}
+              {pending === "send" ? <Spinner data-icon="inline-start" /> : canSend ? <Send data-icon="inline-start" /> : <Lock data-icon="inline-start" />}
               {pending === "send" ? "Sending…" : sent ? "Sent" : "Send test email"}
             </Button>
           </div>
@@ -279,7 +282,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
           <AlertDialogHeader>
             <AlertDialogTitle>Send revision {draft.revision} to the test inbox?</AlertDialogTitle>
             <AlertDialogDescription>
-              It goes to {draft.test_recipient}, not to the prospect. Each approved revision can be sent once. If Gmail confirms it, {account.name} moves to Contacted.
+              The message goes to {draft.test_recipient}. This draft allows one send attempt. When Gmail accepts it, {account.name} moves to Contacted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -295,18 +298,21 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
 function StatusAlert({ draft, dirty, lastEditMessage }: { draft: Draft; dirty: boolean; lastEditMessage?: string }) {
   const r = draft.revision;
   if (draft.dispatch_status === "sent") {
-    return <InlineAlert tone="success" title={`Revision ${r} was delivered to the test inbox`}>Gmail confirmed the send at {time(draft.updated_at)}. The pipeline was updated once, marked as a test send.</InlineAlert>;
+    return <InlineAlert tone="success" title={`Gmail accepted revision ${r}`}>The test send was recorded at {time(draft.updated_at)} and the pipeline was updated once. Check the test inbox for delivery.</InlineAlert>;
   }
   if (draft.dispatch_status === "pending_outcome") {
     return <InlineAlert tone="pending" title="Gmail didn't confirm the send">The request timed out, so the email may or may not have gone out. Signal won't send this draft again, and the pipeline stage is unchanged until the outcome is checked.</InlineAlert>;
   }
   if (draft.dispatch_status === "failed") {
-    return <InlineAlert tone="danger" title={`Gmail rejected revision ${r}`}>Nothing was delivered and the pipeline stage is unchanged. Edit and approve a new revision to try again.</InlineAlert>;
+    return <InlineAlert tone="danger" title={`The test send failed for revision ${r}`}>The attempt is recorded and the draft is locked. The lead remains at its previous stage.</InlineAlert>;
   }
   if (dirty) {
     return <InlineAlert tone="info" title="You have unsaved changes">Save them as revision {r + 1}, then approve that revision before sending.</InlineAlert>;
   }
   if (draft.review_status === "approved") {
+    if (!draft.test_recipient) {
+      return <InlineAlert tone="warning" title="Test inbox setup needed">Configure the test inbox, then save and approve a new revision.</InlineAlert>;
+    }
     return <InlineAlert tone="success" title={`Revision ${r} is approved`}>It's ready to send to the controlled test inbox. Any edit clears this approval.</InlineAlert>;
   }
   if (draft.review_status === "rejected") {

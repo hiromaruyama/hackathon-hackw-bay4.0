@@ -182,11 +182,9 @@ export const sampleWorkspace: Workspace = {
       ],
       signal: null,
       negative_signal: {
-        id: "neg-blue",
-        kind: "exclusion",
-        summary: "Offshore wind only",
-        occurred_on: null,
+        reason: "Offshore wind only",
         evidence_id: "ev-blue-about",
+        hard_exclusion: true,
       },
       graph_path: [],
       enrichment_status: "not_started",

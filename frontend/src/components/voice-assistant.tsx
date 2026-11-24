@@ -187,7 +187,7 @@ function summarize(w: Workspace | null) {
       intent_score: a.intent_score,
       reason: a.reason,
       signal: a.signal?.summary ?? null,
-      negative_signal: a.negative_signal?.summary ?? null,
+      negative_signal: a.negative_signal?.reason ?? null,
       sources: a.evidence.map((e) => ({ title: e.title, type: e.source_type, published: e.published_at })),
       contact: a.contact ? { role: a.contact.role, verification: a.contact.verification_status } : null,
       draft: a.draft ? { revision: a.draft.revision, subject: a.draft.subject, review: a.draft.review_status, dispatch: a.draft.dispatch_status } : null,

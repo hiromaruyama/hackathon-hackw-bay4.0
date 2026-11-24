@@ -232,17 +232,11 @@ function Profile() {
                   <div className="mt-2 flex flex-col gap-3">
                     <p>
                       <span className="font-semibold">{icp.expansion.segment}</span>
-                      {icp.expansion.rationale ? <span className="text-muted-foreground"> {icp.expansion.rationale}</span> : null}
+                      <span className="text-muted-foreground"> {icp.expansion.reason}</span>
                     </p>
-                    {icp.expansion.evidence?.length ? (
-                      <ul className="text-sm">
-                        {icp.expansion.evidence.map((e) => (
-                          <li key={e.id}>
-                            <a href={e.url} target="_blank" rel="noreferrer noopener">{e.title}</a>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
+                    <a className="text-sm" href={icp.expansion.evidence.url} target="_blank" rel="noreferrer noopener">
+                      {icp.expansion.evidence.title}
+                    </a>
                     <div role="radiogroup" aria-label="Adjacent segment decision" className="flex flex-wrap gap-2">
                       {(["accept", "edit", "dismiss"] as const).map((d) => (
                         <Button key={d} type="button" role="radio" aria-checked={decision === d} variant={decision === d ? "default" : "outline"} size="sm" onClick={() => setDecision(d)}>

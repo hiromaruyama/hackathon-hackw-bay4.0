@@ -42,6 +42,8 @@ function AccountView() {
 
   const enr = enrichmentText(a.enrichment_status, a.contact?.verification_status);
   const drafting = pending === `draft-${a.id}`;
+  const risk = a.negative_signal;
+  const riskSource = a.evidence.find((e) => e.id === risk?.evidence_id);
 
   async function onDraft() {
     setError(null);
@@ -101,13 +103,13 @@ function AccountView() {
               ) : (
                 <SignalRow tone="none" title="No supported buying signal" meta="Intent is 0 until a source supports one." />
               )}
-              {a.negative_signal ? <SignalRow tone="negative" title={a.negative_signal.summary} meta={`Reason to ${a.recommendation === "reject" ? "reject" : "hold"}, ${day(a.negative_signal.occurred_on)}`} /> : null}
+              {risk ? <SignalRow tone="negative" title={risk.reason} meta={`Reason to ${a.recommendation === "reject" ? "reject" : "hold"}, ${day(riskSource?.published_at)}`} /> : null}
             </div>
           </Panel>
 
           <Panel aria-labelledby="sources">
             <PanelHeader title="Sources" id="sources" />
-            <EvidenceList evidence={a.evidence} highlightId={a.signal?.evidence_id} />
+            <EvidenceList evidence={a.evidence} highlightId={riskSource?.id ?? a.signal?.evidence_id} />
           </Panel>
         </div>
 

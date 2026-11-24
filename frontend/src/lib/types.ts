@@ -44,8 +44,8 @@ export interface Evidence {
 
 export interface IcpExpansion {
   segment: string;
-  rationale?: string | null;
-  evidence?: Evidence[];
+  reason: string;
+  evidence: Evidence;
 }
 
 export interface Icp {
@@ -64,6 +64,12 @@ export interface Signal {
   summary: string;
   occurred_on: string | null;
   evidence_id: string | null;
+}
+
+export interface NegativeSignal {
+  reason: string;
+  evidence_id: string;
+  hard_exclusion: boolean;
 }
 
 export interface GraphNode {
@@ -90,7 +96,7 @@ export interface Draft {
   revision: number;
   subject: string;
   body: string;
-  test_recipient: string;
+  test_recipient: string | null;
   evidence_ids: string[];
   role_based: boolean;
   synthesis_mode: "claude" | "grounded_template";
@@ -116,7 +122,7 @@ export interface Account {
   icp_revision: number;
   evidence: Evidence[];
   signal: Signal | null;
-  negative_signal: Signal | null;
+  negative_signal: NegativeSignal | null;
   graph_path: GraphNode[];
   enrichment_status: EnrichmentStatus;
   contact: Contact | null;
@@ -176,9 +182,9 @@ export interface Pipeline {
 export interface UsageEvent {
   id: string;
   account_id: string;
-  operation: string;
+  operation: "leads_enriched" | "graph_query_evaluated" | "outreach_sent";
   units: number;
-  status: string;
+  status: "pending" | "accepted" | "blocked" | "failed";
   at: string;
 }
 

@@ -74,7 +74,7 @@ export const simulate = {
   saveDraft(w: Workspace, draftId: string, expected: number, subject: string, body: string): Workspace {
     const { account, draft } = findDraft(w, draftId);
     if (draft.revision !== expected) conflict("Someone saved a newer revision.");
-    if (draft.dispatch_status === "pending_outcome") conflict("This draft is locked until the send outcome is checked.");
+    if (draft.dispatch_status !== "not_sent") conflict("This draft is locked because a send was already reserved.");
     const wasApproved = draft.review_status === "approved";
     Object.assign(draft, { revision: expected + 1, subject, body, review_status: "pending_review", dispatch_status: "not_sent", updated_at: now() });
     log(w, {
@@ -91,6 +91,7 @@ export const simulate = {
   review(w: Workspace, draftId: string, revision: number, decision: "approve" | "reject"): Workspace {
     const { account, draft } = findDraft(w, draftId);
     if (draft.revision !== revision) conflict("You can only review the current revision.");
+    if (draft.dispatch_status !== "not_sent") conflict("This draft is locked because a send was already reserved.");
     draft.review_status = decision === "approve" ? "approved" : "rejected";
     log(w, { type: `draft_${decision === "approve" ? "approved" : "rejected"}`, actor: "demo", account_id: account.id, draft_id: draftId, revision, message: `${decision === "approve" ? "Approved" : "Rejected"} revision ${revision}.` });
     return w;

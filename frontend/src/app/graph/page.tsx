@@ -105,9 +105,10 @@ function buildGraph(w: Workspace) {
       addEdge({ from: a.id, to: a.signal.id, rel: "HAS_SIGNAL", saved: false, evidenceId: a.signal.evidence_id });
     }
     if (a.negative_signal) {
-      const s = a.negative_signal;
-      if (!nodes.has(s.id)) nodes.set(s.id, { id: s.id, type: "signal", label: s.summary, accountId: a.id, risk: true, meta: "Reason to hold or reject" });
-      addEdge({ from: a.id, to: s.id, rel: "HAS_RISK", saved: false, evidenceId: s.evidence_id });
+      const risk = a.negative_signal;
+      const id = `risk-${a.id}`;
+      nodes.set(id, { id, type: "signal", label: risk.reason, accountId: a.id, risk: true, meta: "Reason to hold or reject" });
+      addEdge({ from: a.id, to: id, rel: "HAS_RISK", saved: false, evidenceId: risk.evidence_id });
     }
     if (a.contact) {
       const c = a.contact;

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "./api";
 import { sampleWorkspace } from "./fixture";
 import { simulate } from "./sample-actions";
-import type { IcpApproveInput, IcpGenerateInput, Workspace } from "./types";
+import type { Account, IcpApproveInput, IcpGenerateInput, Signal, Workspace } from "./types";
 
 export type DataMode = "live" | "sample";
 type LoadStatus = "loading" | "ready" | "error" | "signin";
@@ -13,11 +13,27 @@ type LoadStatus = "loading" | "ready" | "error" | "signin";
 export const SAMPLE_MODE = process.env.NEXT_PUBLIC_SAMPLE_DATA === "1";
 const SAMPLE_KEY = "signal-sample-workspace-v1";
 
+type StoredSample = Omit<Workspace, "accounts"> & {
+  accounts: (Omit<Account, "negative_signal"> & { negative_signal: Account["negative_signal"] | Signal })[];
+};
+
 // Sample mode keeps its state for this browser tab so reloads and direct links continue the demo.
 function loadSample(): Workspace {
   try {
     const saved = sessionStorage.getItem(SAMPLE_KEY);
-    if (saved) return JSON.parse(saved) as Workspace;
+    if (saved) {
+      const snapshot = JSON.parse(saved) as StoredSample;
+      return {
+        ...snapshot,
+        accounts: snapshot.accounts.map((account) => {
+          const risk = account.negative_signal;
+          const negative_signal = risk && "summary" in risk
+            ? { reason: risk.summary, evidence_id: risk.evidence_id ?? "", hard_exclusion: risk.kind === "exclusion" }
+            : risk;
+          return { ...account, negative_signal };
+        }),
+      };
+    }
   } catch {
     // Storage can be unavailable (private mode); fall back to the fixture.
   }
@@ -121,6 +137,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           toast.warning("This changed since you loaded it. Showing the latest version.");
           await refresh();
         }
+        if (err.status === 402) await refresh();
         return { ok: false, error: err };
       } finally {
         setPending(null);
