@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Minus, Plus, Search } from "lucide-react";
+import { Minus, Plus, RotateCcw, Search } from "lucide-react";
+import { ExportMenu } from "@/components/export-menu";
+import { downloadFile, toCsv } from "@/lib/download";
 import { AppShell } from "@/components/app-shell";
 import { GraphInsights } from "@/components/graph-insights";
 import { EvidenceList, Panel } from "@/components/signal";
@@ -260,6 +262,22 @@ function Explorer() {
   const visibleIds = new Set(visibleNodes.map((n) => n.id));
   const visibleEdges = edges.filter((e) => visibleIds.has(e.from) && visibleIds.has(e.to));
 
+  function exportGraph(format: "nodes" | "edges" | "json") {
+    const sourceUrl = (id: string | null) => id ? evidence.get(id)?.url : undefined;
+    if (format === "json") {
+      const edges = visibleEdges.map((edge) => ({ ...edge, sourceUrl: sourceUrl(edge.evidenceId) }));
+      downloadFile("signal-graph.json", "application/json", JSON.stringify({ nodes: visibleNodes, edges }, null, 2));
+      return;
+    }
+
+    const csv = format === "nodes"
+      ? toCsv(["ID", "Type", "Label", "Fit", "Account ID", "Details"],
+          visibleNodes.map((node) => [node.id, node.type, node.label, node.score, node.accountId, node.meta]))
+      : toCsv(["From node ID", "To node ID", "Relationship", "Saved in Neo4j", "Source URL"],
+          visibleEdges.map((edge) => [edge.from, edge.to, edge.rel, edge.saved, sourceUrl(edge.evidenceId)]));
+    downloadFile(`signal-graph-${format}.csv`, "text/csv;charset=utf-8", csv);
+  }
+
   const sel = selected && visibleIds.has(selected) ? selected : null;
   const neighborhood = new Set<string>();
   if (sel) {
@@ -308,23 +326,23 @@ function Explorer() {
         <p className="text-muted-foreground">Companies are sized by fit score. Solid lines are saved in Neo4j; dashed lines come from the account's saved research.</p>
       </div>
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,2.4fr)_minmax(16rem,1fr)]">
         <Panel className="flex flex-col gap-3 p-4 md:px-5">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-            <fieldset className="flex flex-wrap gap-x-5 gap-y-2">
-              <legend className="sr-only">Show node types</legend>
-              {TYPES.map((t) => {
-                const count = nodes.filter((n) => n.type === t.type).length;
-                return (
-                  <label key={t.type} className={cn("flex cursor-pointer items-center gap-2 text-sm", count === 0 && "opacity-50")}>
-                    <input type="checkbox" checked={!hidden.has(t.type)} onChange={() => toggle(t.type)} className="size-4 accent-primary" />
-                    <span aria-hidden className={cn("inline-block size-3", t.type === "company" ? "rounded-[2px]" : t.type === "competitor" ? "rotate-45 rounded-[1px]" : "rounded-full")} style={{ background: t.color }} />
-                    {t.label} ({count})
-                  </label>
-                );
-              })}
-            </fieldset>
-            <label className="ml-auto flex h-9 w-full items-center gap-2 rounded-md border border-input bg-card px-2.5 text-muted-foreground sm:w-56">
+          <fieldset className="flex flex-wrap gap-x-5 gap-y-2">
+            <legend className="sr-only">Show node types</legend>
+            {TYPES.map((t) => {
+              const count = nodes.filter((n) => n.type === t.type).length;
+              return (
+                <label key={t.type} className={cn("flex cursor-pointer items-center gap-2 text-sm", count === 0 && "opacity-50")}>
+                  <input type="checkbox" checked={!hidden.has(t.type)} onChange={() => toggle(t.type)} className="size-4 accent-primary" />
+                  <span aria-hidden className={cn("inline-block size-3", t.type === "company" ? "rounded-[2px]" : t.type === "competitor" ? "rotate-45 rounded-[1px]" : "rounded-full")} style={{ background: t.color }} />
+                  {t.label} ({count})
+                </label>
+              );
+            })}
+          </fieldset>
+          <div role="group" aria-label="Graph controls" className="flex flex-wrap items-center gap-2 rounded-md border bg-subtle p-2">
+            <label className="flex h-9 min-w-32 flex-[1_1_10rem] items-center gap-2 rounded-md border border-input bg-card px-2.5 text-muted-foreground">
               <Search aria-hidden className="size-4" />
               <Input
                 aria-label="Find node"
@@ -338,21 +356,29 @@ function Explorer() {
                 className="h-auto border-0 p-0 text-sm text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
               />
             </label>
+            <div className="shrink-0">
+              <ExportMenu label="Export knowledge graph" formats={[
+                { label: "Nodes CSV", download: () => exportGraph("nodes") },
+                { label: "Edges CSV", download: () => exportGraph("edges") },
+                { label: "Graph JSON", download: () => exportGraph("json") },
+              ]} />
+            </div>
+            <div role="group" aria-label="Graph zoom" className="flex shrink-0 items-center gap-1">
+              <Button type="button" variant="outline" size="icon" aria-label="Zoom out"
+                disabled={zoom <= MIN_ZOOM} onClick={() => changeZoom(Math.max(MIN_ZOOM, zoom - ZOOM_STEP))}>
+                <Minus aria-hidden />
+              </Button>
+              <output aria-label="Zoom level" className="w-12 text-center text-sm tabular-nums">{Math.round(zoom)}%</output>
+              <Button type="button" variant="outline" size="icon" aria-label="Zoom in"
+                disabled={zoom >= MAX_ZOOM} onClick={() => changeZoom(Math.min(MAX_ZOOM, zoom + ZOOM_STEP))}>
+                <Plus aria-hidden />
+              </Button>
+              <Button type="button" variant="outline" size="icon" aria-label="Reset zoom" title="Reset zoom" onClick={() => changeZoom(100)}>
+                <RotateCcw aria-hidden />
+              </Button>
+            </div>
           </div>
           {q && matches.length === 0 ? <p role="status" className="text-sm text-muted-foreground">No node matches “{query}”.</p> : null}
-
-          <div role="group" aria-label="Graph zoom" className="flex items-center gap-2 self-end">
-            <Button type="button" variant="outline" size="icon" aria-label="Zoom out"
-              disabled={zoom <= MIN_ZOOM} onClick={() => changeZoom(Math.max(MIN_ZOOM, zoom - ZOOM_STEP))}>
-              <Minus aria-hidden />
-            </Button>
-            <output aria-label="Zoom level" className="w-12 text-center text-sm tabular-nums">{Math.round(zoom)}%</output>
-            <Button type="button" variant="outline" size="icon" aria-label="Zoom in"
-              disabled={zoom >= MAX_ZOOM} onClick={() => changeZoom(Math.min(MAX_ZOOM, zoom + ZOOM_STEP))}>
-              <Plus aria-hidden />
-            </Button>
-            <Button type="button" variant="outline" onClick={() => changeZoom(100)}>Reset zoom</Button>
-          </div>
 
           <div ref={viewport} role="region" aria-label="Scrollable graph canvas" tabIndex={0}
             className="overflow-auto rounded-md border bg-subtle" style={{ aspectRatio: `${W} / ${H}` }}>
@@ -469,60 +495,64 @@ function Explorer() {
           </p>
         </Panel>
 
-        <Panel aria-labelledby="node-title" className="flex flex-col gap-4 xl:sticky xl:top-4">
-          {selNode ? (
-            <>
-              <div className="flex flex-col gap-1">
-                <span className="text-[13px] text-muted-foreground">{TYPES.find((t) => t.type === selNode.type)!.label}</span>
-                <h2 id="node-title" className="text-[17px] font-semibold">{selNode.label}</h2>
-                <span className="text-sm text-muted-foreground">{selNode.meta}</span>
-                {selNode.accountId ? (
-                  <Link href={`/accounts/view/?id=${selNode.accountId}`} className="mt-1 text-sm font-semibold">Open account</Link>
-                ) : null}
-              </div>
-              <div>
-                <h3 className="mb-1.5 text-sm font-semibold">Edges ({selEdges.length})</h3>
-                <ul className="flex flex-col gap-1.5 text-sm">
-                  {selEdges.map((e) => {
-                    const other = e.from === sel ? e.to : e.from;
-                    return (
-                      <li key={e.id} className="flex flex-wrap items-baseline gap-x-1.5">
-                        <span className="text-muted-foreground">{e.from === sel ? "" : `${nameOf(e.from)} `}</span>
-                        <span className="font-semibold">{e.rel.toLowerCase().replace(/_/g, " ")}</span>
-                        <button type="button" className="text-link underline-offset-2 hover:underline" onClick={() => setSelected(other)}>
-                          {e.from === sel ? nameOf(e.to) : "this"}
-                        </button>
-                        <span className="text-xs text-muted-foreground">{e.saved ? "Neo4j" : "research"}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-              <div>
-                <h3 className="mb-1.5 text-sm font-semibold">Sources</h3>
-                {selEvidence.length ? <EvidenceList evidence={selEvidence} numbered={false} /> : <p className="text-sm text-muted-foreground">No source is attached to these edges.</p>}
-              </div>
-              {selNode.accountId && mode === "live" ? <GraphInsights key={selNode.accountId} accountId={selNode.accountId} /> : null}
-            </>
-          ) : (
-            <>
-              <h2 id="node-title" className="text-[17px] font-semibold">Select a node</h2>
-              <p className="text-sm text-muted-foreground">Click a company, signal, person or competitor to see its connections and the sources behind them.</p>
-              <ul className="flex flex-col gap-2 text-sm">
-                {nodes
-                  .filter((n) => n.type === "company")
-                  .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-                  .map((n) => (
-                    <li key={n.id} className="flex items-center justify-between gap-3">
-                      <button type="button" className="text-left font-semibold text-foreground underline-offset-2 hover:underline" onClick={() => setSelected(n.id)}>
-                        {n.label}
-                      </button>
-                      <span className="tabular-nums text-muted-foreground">fit {n.score}</span>
-                    </li>
-                  ))}
-              </ul>
-            </>
-          )}
+        <Panel aria-labelledby="node-title" className="relative min-w-0">
+          <div className={cn("flex min-h-0 flex-col gap-4 xl:absolute xl:inset-5", selNode && "xl:overflow-y-auto")}>
+            {selNode ? (
+              <>
+                <div className="flex flex-col gap-1">
+                  <span className="text-[13px] text-muted-foreground">{TYPES.find((t) => t.type === selNode.type)!.label}</span>
+                  <h2 id="node-title" className="text-[17px] font-semibold">{selNode.label}</h2>
+                  <span className="text-sm text-muted-foreground">{selNode.meta}</span>
+                  {selNode.accountId ? (
+                    <Link href={`/accounts/view/?id=${selNode.accountId}`} className="mt-1 text-sm font-semibold">Open account</Link>
+                  ) : null}
+                </div>
+                <div>
+                  <h3 className="mb-1.5 text-sm font-semibold">Edges ({selEdges.length})</h3>
+                  <ul className="flex flex-col gap-1.5 text-sm">
+                    {selEdges.map((e) => {
+                      const other = e.from === sel ? e.to : e.from;
+                      return (
+                        <li key={e.id} className="flex flex-wrap items-baseline gap-x-1.5">
+                          <span className="text-muted-foreground">{e.from === sel ? "" : `${nameOf(e.from)} `}</span>
+                          <span className="font-semibold">{e.rel.toLowerCase().replace(/_/g, " ")}</span>
+                          <button type="button" className="text-link underline-offset-2 hover:underline" onClick={() => setSelected(other)}>
+                            {e.from === sel ? nameOf(e.to) : "this"}
+                          </button>
+                          <span className="text-xs text-muted-foreground">{e.saved ? "Neo4j" : "research"}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+                <div>
+                  <h3 className="mb-1.5 text-sm font-semibold">Sources</h3>
+                  {selEvidence.length ? <EvidenceList evidence={selEvidence} numbered={false} /> : <p className="text-sm text-muted-foreground">No source is attached to these edges.</p>}
+                </div>
+                {selNode.accountId && mode === "live" ? <GraphInsights key={selNode.accountId} accountId={selNode.accountId} /> : null}
+              </>
+            ) : (
+              <>
+                <h2 id="node-title" className="text-[17px] font-semibold">Select a node</h2>
+                <p className="text-sm text-muted-foreground">Click a company, signal, person or competitor to see its connections and the sources behind them.</p>
+                <div role="region" aria-label="Company nodes" tabIndex={0} className="min-h-0 max-h-64 overflow-y-auto pr-2 xl:max-h-none xl:flex-1">
+                  <ul className="flex flex-col gap-2 text-sm">
+                    {visibleNodes
+                      .filter((n) => n.type === "company")
+                      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+                      .map((n) => (
+                        <li key={n.id} className="flex items-center justify-between gap-3">
+                          <button type="button" className="text-left font-semibold text-foreground underline-offset-2 hover:underline" onClick={() => setSelected(n.id)}>
+                            {n.label}
+                          </button>
+                          <span className="shrink-0 tabular-nums text-muted-foreground">fit {n.score}</span>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              </>
+            )}
+          </div>
         </Panel>
       </div>
     </>

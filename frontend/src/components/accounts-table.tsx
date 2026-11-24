@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { ExportMenu } from "@/components/export-menu";
+import { downloadFile, toCsv } from "@/lib/download";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -25,9 +27,16 @@ const unstagedLabel: Record<Recommendation, string> = {
   reject: "Excluded",
 };
 
-export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Workspace; title?: string }) {
+const PREVIEW_ROW_LIMIT = 2;
+
+export function AccountsTable({ workspace, title = "Accounts", compact = false }: {
+  workspace: Workspace;
+  title?: string;
+  compact?: boolean;
+}) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
+  const [rowLimit, setRowLimit] = useState(String(PREVIEW_ROW_LIMIT));
   const accounts = workspace.accounts;
   const stagesByAccount = new Map(workspace.pipeline.leads.map((lead) => [lead.account_id, lead.stage]));
 
@@ -37,6 +46,38 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
       .filter((a) => filter === "all" || a.recommendation === filter)
       .filter((a) => !q || `${a.name} ${a.domain}`.toLowerCase().includes(q));
   }, [accounts, filter, query]);
+
+  const shownRows = compact && rowLimit !== "all" ? rows.slice(0, Number(rowLimit)) : rows;
+
+  function exportAccounts(format: "csv" | "json") {
+    const entries = rows.map((account) => ({
+      company: account.name,
+      domain: account.domain,
+      industry: account.industry,
+      geography: account.geography,
+      tier: account.tier,
+      fit: account.fit_score,
+      intent: account.intent_score,
+      verdict: account.recommendation,
+      signal: account.signal?.summary,
+      signalDate: account.signal?.occurred_on,
+      title: account.contact?.role ?? account.buyer_role,
+      enrichment: account.enrichment_status,
+      stage: stagesByAccount.get(account.id),
+      sources: account.evidence.map((item) => item.url),
+    }));
+    if (format === "json") {
+      downloadFile("signal-accounts.json", "application/json", JSON.stringify(entries, null, 2));
+      return;
+    }
+    downloadFile("signal-accounts.csv", "text/csv;charset=utf-8", toCsv(
+      ["Company", "Domain", "Industry", "Geography", "Tier", "Fit", "Intent", "Verdict", "Signal", "Signal date",
+        "Title", "Enrichment", "Stage", "Source URLs"],
+      entries.map((entry) => [entry.company, entry.domain, entry.industry, entry.geography, entry.tier,
+        entry.fit, entry.intent, entry.verdict, entry.signal, entry.signalDate, entry.title,
+        entry.enrichment, entry.stage, entry.sources.join(" | ")]),
+    ));
+  }
 
   const count = (f: Filter) => accounts.filter((a) => f === "all" || a.recommendation === f).length;
 
@@ -76,6 +117,30 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
         </label>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {compact && rows.length > PREVIEW_ROW_LIMIT ? (
+          <div className="flex flex-wrap items-center justify-end gap-3 text-sm">
+            <label className="flex items-center gap-2">
+              Rows
+              <select value={rowLimit} onChange={(event) => setRowLimit(event.target.value)}
+                className="h-9 rounded-md border border-input bg-card px-2 text-foreground">
+                <option value={PREVIEW_ROW_LIMIT}>{PREVIEW_ROW_LIMIT}</option>
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+            <span role="status" className="text-muted-foreground">Showing {shownRows.length} of {rows.length} companies</span>
+          </div>
+        ) : null}
+        <div className="ml-auto">
+          <ExportMenu label="Export accounts" disabled={!rows.length} formats={[
+            { label: "CSV", download: () => exportAccounts("csv") },
+            { label: "JSON", download: () => exportAccounts("json") },
+          ]} />
+        </div>
+      </div>
+
       <div className="overflow-x-auto">
         <Table className="min-w-[760px] text-sm">
           <TableHeader>
@@ -90,7 +155,7 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((a) => {
+            {shownRows.map((a) => {
               const risk = a.negative_signal;
               const signal = risk && a.recommendation === "reject" ? null : a.signal;
               const summary = signal?.summary ?? risk?.reason;
