@@ -1,0 +1,161 @@
+from contextlib import asynccontextmanager
+from secrets import compare_digest, token_urlsafe
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import SecretStr
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.staticfiles import StaticFiles
+
+from .config import Settings
+from .errors import SignalError
+from .models import ApproveIcp, DiscoverInput, EditDraft, InputModel, ProductInput, ReviewDraft, RevisionInput, Workspace
+from .providers import Providers
+from .store import Neo4jStore
+from .workflow import Workflow
+
+
+class Login(InputModel):
+    password: SecretStr
+
+
+def error_response(code: str, message: str, status: int) -> JSONResponse:
+    return JSONResponse({'error': {'code': code, 'message': message}}, status_code=status)
+
+
+def require_actor(request: Request) -> str:
+    actor = request.session.get('actor')
+    if not actor or actor != request.app.state.settings.demo_username:
+        raise SignalError('sign_in_required', 'Sign in to open the demo workspace.', 401)
+    return actor
+
+
+Actor = Annotated[str, Depends(require_actor)]
+
+
+def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = None, providers: Providers | None = None) -> FastAPI:
+    settings = settings or Settings.load()
+    if settings.session_secret and len(settings.session_secret) < 32:
+        raise ValueError('SIGNAL_SESSION_SECRET must be at least 32 characters.')
+    if settings.demo_username == 'system':
+        raise ValueError('SIGNAL_DEMO_USERNAME cannot be the system actor.')
+    store = store or Neo4jStore(settings)
+    providers = providers or Providers(settings)
+    workflow = Workflow(settings, store, providers)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        yield
+        providers.close()
+        store.close()
+
+    app = FastAPI(title='Signal API', version='1.0', docs_url='/api/docs', openapi_url='/api/openapi.json', lifespan=lifespan)
+    app.state.settings = settings
+    app.add_middleware(
+        SessionMiddleware, secret_key=settings.session_secret or token_urlsafe(36), session_cookie='signal_session',
+        https_only=settings.public_origin.startswith('https://'), same_site='lax', max_age=8 * 60 * 60,
+    )
+
+    @app.middleware('http')
+    async def security_headers(request: Request, call_next):
+        is_api = request.url.path.startswith('/api/')
+        if is_api and request.method in ('POST', 'PATCH', 'PUT', 'DELETE') and request.headers.get('origin') != settings.public_origin:
+            response = error_response('origin_rejected', 'Use the configured demo origin for writes.', 403)
+        else:
+            response = await call_next(request)
+        if is_api:
+            response.headers['cache-control'] = 'no-store'
+        response.headers['x-content-type-options'] = 'nosniff'
+        response.headers['referrer-policy'] = 'no-referrer'
+        response.headers['x-frame-options'] = 'DENY'
+        return response
+
+    app.add_middleware(
+        CORSMiddleware, allow_origins=[settings.public_origin], allow_credentials=True,
+        allow_methods=['GET', 'POST', 'PATCH', 'DELETE'], allow_headers=['Content-Type'],
+    )
+
+    @app.exception_handler(SignalError)
+    async def workflow_error(_: Request, error: SignalError):
+        return error_response(error.code, str(error), error.status)
+
+    @app.exception_handler(RequestValidationError)
+    async def bad_request(_: Request, error: RequestValidationError):
+        # FastAPI's default response can reflect supplied input, including credentials.
+        return error_response('validation_error', 'Check the required fields and supported values for this action.', 422)
+
+    @app.get('/api/health')
+    def health():
+        return {'status': 'ok'}
+
+    @app.post('/api/session')
+    def login(body: Login, request: Request):
+        if not settings.demo_password or not settings.session_secret:
+            raise SignalError('demo_auth_unconfigured', 'Configure the demo password and session secret.', 503)
+        if not compare_digest(body.password.get_secret_value().encode(), settings.demo_password.encode()):
+            raise SignalError('invalid_password', 'The demo password is incorrect.', 401)
+        request.session.clear()
+        request.session['actor'] = settings.demo_username
+        return {'actor': settings.demo_username}
+
+    @app.get('/api/session')
+    def session(actor: Actor):
+        return {'actor': actor}
+
+    @app.delete('/api/session', status_code=204)
+    def logout(request: Request, actor: Actor):
+        request.session.clear()
+        return Response(status_code=204)
+
+    @app.get('/api/readiness')
+    def readiness(actor: Actor):
+        return {
+            'claude_configured': bool(settings.anthropic_api_key), 'tavily_configured': bool(settings.tavily_api_key),
+            'hunter_configured': bool(settings.hunter_api_key), 'neo4j_configured': bool(settings.neo4j_uri),
+            'neo4j_reachable': store.check(), 'gmail_configured': settings.gmail_configured,
+            'flexprice_enabled': settings.flexprice_enabled, 'flexprice_configured': settings.flexprice_configured,
+            'nexla_configured': bool(settings.nexla_sync_url and settings.nexla_access_token),
+        }
+
+    @app.get('/api/workspace')
+    def workspace(actor: Actor) -> Workspace:
+        return workflow.workspace()
+
+    @app.post('/api/icp/generate')
+    def generate_icp(body: ProductInput, actor: Actor) -> Workspace:
+        return workflow.generate_icp(body, actor)
+
+    @app.post('/api/icp/approve')
+    def approve_icp(body: ApproveIcp, actor: Actor) -> Workspace:
+        return workflow.approve_icp(body, actor)
+
+    @app.post('/api/discover')
+    def discover(body: DiscoverInput, actor: Actor) -> Workspace:
+        return workflow.discover(body.revision, actor, refresh=body.refresh)
+
+    @app.post('/api/accounts/{account_id}/draft')
+    def create_draft(account_id: str, actor: Actor) -> Workspace:
+        return workflow.create_draft(account_id, actor)
+
+    @app.patch('/api/drafts/{draft_id}')
+    def edit_draft(draft_id: str, body: EditDraft, actor: Actor) -> Workspace:
+        return workflow.edit_draft(draft_id, body, actor)
+
+    @app.post('/api/drafts/{draft_id}/review')
+    def review_draft(draft_id: str, body: ReviewDraft, actor: Actor) -> Workspace:
+        return workflow.review_draft(draft_id, body, actor)
+
+    @app.post('/api/drafts/{draft_id}/send')
+    def send_draft(draft_id: str, body: RevisionInput, actor: Actor) -> Workspace:
+        return workflow.send_draft(draft_id, body.revision, actor)
+
+    if settings.static_dir.is_dir():
+        app.mount('/', StaticFiles(directory=settings.static_dir, html=True), name='workspace-ui')
+
+    return app
+
+
+app = create_app()
