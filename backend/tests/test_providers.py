@@ -9,8 +9,9 @@ import httpx
 import pytest
 
 from signal_app.config import Settings
+from signal_app.errors import ProviderError
 from signal_app.models import DraftRevision, UsageEvent
-from signal_app.providers import Providers
+from signal_app.providers import GMAIL_METADATA_SCOPE, Providers
 
 
 def message(recipient='demo@example.com'):
@@ -60,8 +61,10 @@ def test_gmail_feedback_matches_known_message_and_controlled_mailbox():
     def handler(request):
         if request.url.host == 'oauth2.googleapis.com':
             assert b'refresh_token=metadata-token' in request.content
-            return httpx.Response(200, json={'access_token': 'metadata-only'})
+            return httpx.Response(200, json={'access_token': 'metadata-only', 'scope': GMAIL_METADATA_SCOPE})
         assert request.method == 'GET'
+        if request.url.path.endswith('/profile'):
+            return httpx.Response(200, json={'emailAddress': 'owner@example.com'})
         assert request.url.params['format'] == 'metadata'
         assert request.headers['Authorization'] == 'Bearer metadata-only'
         if request.url.path.endswith('/messages/sent-id'):
@@ -81,6 +84,56 @@ def test_gmail_feedback_matches_known_message_and_controlled_mailbox():
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         result = Providers(settings, client).gmail_feedback(['sent-id'])
     assert [(item.id, item.kind) for item in result['sent-id']] == [('reply-id', 'reply'), ('bounce-id', 'bounce')]
+
+
+@pytest.mark.parametrize('scope', ['', 'https://www.googleapis.com/auth/gmail.readonly',
+                                  GMAIL_METADATA_SCOPE + ' https://www.googleapis.com/auth/gmail.send'])
+def test_gmail_watch_rejects_missing_or_excessive_oauth_scope(scope):
+    settings = Settings(gmail_client_id='test', gmail_client_secret='test', gmail_feedback_refresh_token='test',
+                        gmail_sender='owner@example.com', test_recipient='test@example.com')
+
+    def handler(request):
+        assert request.url.host == 'oauth2.googleapis.com'
+        return httpx.Response(200, json={'access_token': 'test', 'scope': scope})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ProviderError, match='only the gmail.metadata scope'):
+            Providers(settings, client).gmail_watch()
+
+
+def test_gmail_watch_and_history_use_bound_metadata_mailbox():
+    settings = Settings(gmail_client_id='test', gmail_client_secret='test', gmail_feedback_refresh_token='test',
+                        gmail_sender='owner@example.com', test_recipient='test@example.com',
+                        gmail_pubsub_topic='projects/signal-project/topics/signal-gmail-feedback')
+    expiration_ms = int(datetime.now(timezone.utc).timestamp() + 120) * 1000
+    mailbox_address = 'someone-else@example.com'
+
+    def handler(request):
+        if request.url.host == 'oauth2.googleapis.com':
+            return httpx.Response(200, json={'access_token': 'test', 'scope': GMAIL_METADATA_SCOPE})
+        assert request.headers['Authorization'] == 'Bearer test'
+        if request.url.path.endswith('/profile'):
+            return httpx.Response(200, json={'emailAddress': mailbox_address, 'historyId': '105'})
+        if request.url.path.endswith('/watch'):
+            assert request.method == 'POST'
+            assert json.loads(request.content) == {'topicName': settings.gmail_pubsub_topic, 'labelIds': ['INBOX'],
+                                                   'labelFilterBehavior': 'include'}
+            return httpx.Response(200, json={'historyId': '101', 'expiration': str(expiration_ms)})
+        assert request.method == 'GET' and request.url.path.endswith('/history')
+        assert request.url.params['labelId'] == 'INBOX'
+        if request.url.params['startHistoryId'] == '99':
+            return httpx.Response(404)
+        return httpx.Response(200, json={'historyId': '104', 'history': [{'id': '103'}]})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        providers = Providers(settings, client)
+        with pytest.raises(ProviderError, match='does not match the controlled sender'):
+            providers.gmail_watch()
+        mailbox_address = settings.gmail_sender
+        cursor, expires_at = providers.gmail_watch()
+        assert cursor == 101 and int(expires_at.timestamp() * 1000) == expiration_ms
+        assert providers.gmail_history_checkpoint(cursor) == (104, True)
+        assert providers.gmail_history_checkpoint(99) == (105, True)
 
 
 @pytest.mark.parametrize('status, expected', [(403, 'failed'), (503, 'pending_outcome'), (408, 'pending_outcome')])
