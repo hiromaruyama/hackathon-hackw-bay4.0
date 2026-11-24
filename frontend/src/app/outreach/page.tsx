@@ -45,7 +45,7 @@ function Outreach() {
   const draft = steps.find((step) => step.id === params.get("draft")) ?? account?.draft;
 
   return (
-    <AppShell>
+    <AppShell hasEmbeddedAgent={Boolean(draft)}>
       {account && draft ? <Review key={draft.id} account={account} draft={draft} steps={steps} /> :
         workspace ? <DraftDirectory accounts={workspace.accounts} missingDraft={Boolean(param)} gmailFeedback={Boolean(workspace.pipeline.gmail_feedback_configured)} /> : null}
     </AppShell>

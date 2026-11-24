@@ -21,7 +21,12 @@ import { useWorkspace } from "@/lib/workspace-context";
 import { dateTime } from "@/lib/format";
 
 export default function ProfilePage() {
-  return <AppShell fullWidth><Profile /></AppShell>;
+  const [tab, setTab] = useState("brief");
+  return (
+    <AppShell fullWidth hasEmbeddedAgent={tab === "chat"}>
+      <Profile tab={tab} setTab={setTab} />
+    </AppShell>
+  );
 }
 
 function publicEvidenceLink(value: string | undefined) {
@@ -37,12 +42,11 @@ function publicEvidenceLink(value: string | undefined) {
   return null;
 }
 
-function Profile() {
+function Profile({ tab, setTab }: { tab: string; setTab: (value: string) => void }) {
   const { workspace, generateIcp, approveIcp, pending } = useWorkspace();
   const { product, icp } = workspace!;
   const saved = useMemo(() => savedBrief(product, icp?.fields), [product, icp]);
   const revision = icp?.revision;
-  const [tab, setTab] = useState("brief");
   const [edits, setEdits] = useState<Partial<Brief>>({});
   const [carry, setCarry] = useState<Partial<Brief> | null>(null);
   const [seenRevision, setSeenRevision] = useState(revision);
