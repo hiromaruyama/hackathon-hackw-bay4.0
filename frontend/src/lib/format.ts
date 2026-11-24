@@ -48,7 +48,7 @@ export const stageLabel: Record<Stage, string> = {
 
 export const stages: Stage[] = ["matched", "contacted", "replied", "meeting_booked", "closed_lost"];
 
-export function enrichmentText(status: EnrichmentStatus, verification?: string | null) {
+export function enrichmentText(status: EnrichmentStatus, verification?: string | null, recommendation?: Recommendation) {
   switch (status) {
     case "verified":
       return { text: "Hunter: verified", tone: "text-success" };
@@ -59,7 +59,7 @@ export function enrichmentText(status: EnrichmentStatus, verification?: string |
     case "failed":
       return { text: "Hunter lookup failed", tone: "text-destructive" };
     default:
-      return { text: "Not looked up", tone: "text-muted-foreground" };
+      return { text: recommendation === "reject" ? "Lookup skipped" : "Lookup needed", tone: "text-muted-foreground" };
   }
 }
 
