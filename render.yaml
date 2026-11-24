@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: signal-gtm
+    runtime: docker
+    plan: free
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: SIGNAL_DEMO_PASSWORD
+        sync: false
+      - key: SIGNAL_SESSION_SECRET
+        generateValue: true
+      - key: SIGNAL_RESEARCH_REFRESH_MINUTES
+        value: '1440'
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: HUNTER_API_KEY
+        sync: false
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: GMAIL_CLIENT_ID
+        sync: false
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REFRESH_TOKEN
+        sync: false
+      - key: GMAIL_SENDER_ADDRESS
+        sync: false
+      - key: SIGNAL_TEST_RECIPIENT
+        sync: false

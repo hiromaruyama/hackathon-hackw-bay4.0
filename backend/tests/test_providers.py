@@ -50,6 +50,39 @@ def test_gmail_uses_exact_mime_and_configured_recipient():
     assert not sent[0]['Cc'] and not sent[0]['Bcc']
 
 
+def test_gmail_feedback_matches_known_message_and_controlled_mailbox():
+    def row(message_id, **headers):
+        return {'id': message_id, 'threadId': 'thread-1', 'labelIds': ['INBOX'],
+                'payload': {'headers': [{'name': name.replace('_', '-'), 'value': value} for name, value in headers.items()]}}
+
+    original = row('sent-id', To='demo@example.com', Message_ID='<outbound@example.com>')
+
+    def handler(request):
+        if request.url.host == 'oauth2.googleapis.com':
+            assert b'refresh_token=metadata-token' in request.content
+            return httpx.Response(200, json={'access_token': 'metadata-only'})
+        assert request.method == 'GET'
+        assert request.url.params['format'] == 'metadata'
+        assert request.headers['Authorization'] == 'Bearer metadata-only'
+        if request.url.path.endswith('/messages/sent-id'):
+            return httpx.Response(200, json=original)
+        assert request.url.path.endswith('/threads/thread-1')
+        return httpx.Response(200, json={'messages': [original,
+            row('unrelated', From='other@example.com', In_Reply_To='<outbound@example.com>'),
+            row('unbound', From='demo@example.com', In_Reply_To='<other@example.com>'),
+            row('reply-id', From='Owner <demo@example.com>', In_Reply_To='<outbound@example.com>'),
+            row('bounce-id', From='mailer-daemon@example.com', Original_Message_ID='<outbound@example.com>',
+                X_Failed_Recipients='demo@example.com'),
+        ]})
+
+    settings = Settings(gmail_client_id='dummy', gmail_client_secret='dummy', gmail_refresh_token='send-token',
+                        gmail_feedback_refresh_token='metadata-token', gmail_sender='owner@example.com',
+                        test_recipient='demo@example.com')
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = Providers(settings, client).gmail_feedback(['sent-id'])
+    assert [(item.id, item.kind) for item in result['sent-id']] == [('reply-id', 'reply'), ('bounce-id', 'bounce')]
+
+
 @pytest.mark.parametrize('status, expected', [(403, 'failed'), (503, 'pending_outcome'), (408, 'pending_outcome')])
 def test_gmail_transport_reports_definitive_and_ambiguous_failures(status, expected):
     def handler(request):

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { IntakeChat } from "@/components/intake-chat";
 import { InlineAlert, Panel, PanelHeader } from "@/components/signal";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field as FormField, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -12,8 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useWorkspace } from "@/lib/workspace-context";
 import { dateTime } from "@/lib/format";
-import type { ExpansionDecision, IcpFieldKey, IcpFields, IntakeFields } from "@/lib/types";
-import type { ApiError } from "@/lib/api";
+import type { ExpansionDecision, IcpFieldKey, IcpFields, IndustryCode, IntakeFields } from "@/lib/types";
+import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export default function ProfilePage() {
@@ -29,6 +30,7 @@ const join = (a: string[] | undefined) => (a ?? []).join("\n");
 
 const FIELD_META: { key: IcpFieldKey; label: string; list: boolean; hint?: string }[] = [
   { key: "industries", label: "Industries", list: true },
+  { key: "industry_codes", label: "Industry codes", list: true, hint: "One per line, for example NAICS 221114 or SIC 4911" },
   { key: "geography", label: "Geography", list: true },
   { key: "headcount_band", label: "Headcount", list: false, hint: "For example, 50–500" },
   { key: "revenue_band", label: "Revenue", list: false },
@@ -43,6 +45,7 @@ type FieldDraft = Record<IcpFieldKey, string>;
 function toDraft(f: IcpFields): FieldDraft {
   return {
     industries: join(f.industries),
+    industry_codes: join(f.industry_codes?.map((entry) => `${entry.system} ${entry.code}`)),
     geography: join(f.geography),
     headcount_band: f.headcount_band ?? "",
     revenue_band: f.revenue_band ?? "",
@@ -56,6 +59,10 @@ function toDraft(f: IcpFields): FieldDraft {
 function fromDraft(d: FieldDraft): IcpFields {
   return {
     industries: lines(d.industries),
+    industry_codes: lines(d.industry_codes).map((line) => {
+      const [system, code] = line.toUpperCase().split(/\s+/);
+      return { system: system as IndustryCode["system"], code };
+    }),
     geography: lines(d.geography),
     headcount_band: d.headcount_band.trim() || null,
     revenue_band: d.revenue_band.trim() || null,
@@ -99,7 +106,10 @@ function Profile() {
     setSegment(icp.expansion?.segment ?? "");
   }
 
-  const dirty = icp && fields ? JSON.stringify(fromDraft(fields)) !== JSON.stringify(icp.fields) : false;
+  const dirty = Boolean(icp && fields && (
+    JSON.stringify(fromDraft(fields)) !== JSON.stringify(fromDraft(toDraft(icp.fields))) ||
+    (icp.approved && icp.expansion && (decision !== icp.expansion_decision || (decision === "edit" && segment.trim() !== icp.expansion.segment)))
+  ));
   const intakeValues = {
     name: intake.name.trim() || "GeoFlow",
     description: intake.description.trim(),
@@ -138,6 +148,10 @@ function Profile() {
 
   async function onApprove() {
     if (!icp || !fields) return;
+    if (lines(fields.industry_codes).some((line) => !/^(NAICS|SIC)\s+[0-9]{2,6}(?:-[0-9]{2})?$/i.test(line))) {
+      setApproveError(new ApiError(422, "invalid_industry_code", "Use one industry code per line, such as NAICS 221114 or SIC 4911."));
+      return;
+    }
     setApproveError(null);
     const res = await approveIcp({
       revision: icp.revision,
@@ -255,6 +269,17 @@ function Profile() {
                   );
                 })}
               </div>
+
+              {icp.fields.industry_codes?.length ? (
+                <ul aria-label="Recognized industry codes" className="flex flex-col gap-2">
+                  {icp.fields.industry_codes.map((entry) => (
+                    <li key={`${entry.system}-${entry.code}`} className="flex flex-wrap items-center gap-2 text-sm">
+                      <Badge variant="outline">{entry.system} {entry.code}</Badge>
+                      <span>{entry.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
 
               <div className="rounded-md border p-4">
                 <h3 className="font-semibold">Adjacent segment</h3>

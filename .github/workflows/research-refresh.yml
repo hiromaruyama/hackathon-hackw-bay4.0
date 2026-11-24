@@ -1,0 +1,23 @@
+name: Wake scheduled research
+
+on:
+  schedule:
+    - cron: '37 */6 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  wake-service:
+    if: vars.SIGNAL_RENDER_URL != ''
+    runs-on: ubuntu-latest
+    env:
+      SIGNAL_RENDER_URL: ${{ vars.SIGNAL_RENDER_URL }}
+    steps:
+      - name: Wake the Render service through its public health check
+        run: |
+          if [[ ! "$SIGNAL_RENDER_URL" =~ ^https://[a-z0-9-]+\.onrender\.com$ ]]; then
+            printf '::error::SIGNAL_RENDER_URL must be the HTTPS Render service origin.\n'
+            exit 1
+          fi
+          curl --fail --silent --show-error --max-time 120 --retry 2 "$SIGNAL_RENDER_URL/api/health"

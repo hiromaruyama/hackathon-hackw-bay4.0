@@ -1,19 +1,20 @@
 from collections import Counter
+from datetime import timedelta
 from threading import Lock
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from .classification import validate_codes
 from .config import EMAIL_PATTERN, Settings
 from .errors import ProviderError, SignalError
 from .models import (
-    Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview, DraftRevision, EditDraft, Icp,
-    Lead, Pipeline, PipelineEvent, Product, ProductInput, ReviewDraft, State, Usage, UsageEvent, UsageOperation, Workspace,
+    Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview, DraftRevision, EditDraft, GraphInsight, Icp,
+    Lead, Pipeline, PipelineChange, PipelineEvent, Product, ProductInput, ResearchSchedule, ReviewDraft, ScheduleDraft, State,
+    Usage, UsageEvent, UsageOperation, Workspace,
 )
-from .providers import Delivery, Enriched, Providers, stable_id, utcnow
-from .research import analyze_research, check_copy, focus_research, gather_research, make_profile, write_copy
+from .pipeline import PIPELINE_STAGES, funnel_analytics
+from .providers import Delivery, Enriched, Providers, clean_text, stable_id, utcnow
+from .research import analyze_research, check_copy, draft_followups, focus_research, gather_research, make_profile, write_copy
 from .store import GraphTransaction, Neo4jStore
-
-
-PIPELINE_STAGES = ('matched', 'contacted', 'replied', 'meeting_booked', 'closed_lost')
 
 
 def add_activity(state: State, event: str, actor: str, message: str, *, account_id=None, draft_id=None, revision=None) -> None:
@@ -21,6 +22,13 @@ def add_activity(state: State, event: str, actor: str, message: str, *, account_
         id=str(uuid4()), type=event, actor=actor, at=utcnow(), message=message,
         account_id=account_id, draft_id=draft_id, revision=revision,
     ))
+
+
+def research_schedule(state: State, interval: int) -> ResearchSchedule:
+    completed = state.research_completed_at or max((item.researched_at for item in state.accounts), default=None)
+    reference = max((at for at in (completed, state.research_scheduled_attempt_at) if at), default=None)
+    return ResearchSchedule(interval_minutes=interval, last_completed_at=completed,
+                            next_due_at=reference + timedelta(minutes=interval) if interval and reference else None)
 
 
 def icp_current(state: State, revision: int) -> Icp:
@@ -37,8 +45,9 @@ def get_account(state: State, account_id: str) -> Account:
     return account
 
 
-def draft_id(account: Account) -> str:
-    return stable_id('draft', account.id, str(account.icp_revision))
+def draft_id(account: Account, step: int = 1) -> str:
+    parts = (account.id, str(account.icp_revision))
+    return stable_id('draft', *parts) if step == 1 else stable_id('draft', *parts, str(step))
 
 
 def current_draft(graph: GraphTransaction, state: State, key: str, revision: int, *, lock: bool = False) -> Draft:
@@ -52,8 +61,8 @@ def current_draft(graph: GraphTransaction, state: State, key: str, revision: int
 
 
 def require_open_draft(draft: Draft) -> None:
-    if draft.dispatch:
-        raise SignalError('dispatch_already_reserved', 'This draft is locked because a send was already reserved.')
+    if draft.dispatch or draft.prepared_at:
+        raise SignalError('dispatch_already_reserved', 'This draft is locked after its approved handoff or send reservation.')
 
 
 def validate_copy(subject: str, body: str) -> None:
@@ -78,6 +87,7 @@ class Workflow:
         # The hackathon deployment runs one worker; durable send and credit claims also use Neo4j locks.
         self._draft_generation_lock = Lock()
         self._discovery_lock = Lock()
+        self._feedback_lock = Lock()
 
     def workspace(self) -> Workspace:
         def view(graph: GraphTransaction, state: State) -> Workspace:
@@ -85,12 +95,16 @@ class Workflow:
             for account in state.accounts:
                 draft = graph.draft(draft_id(account))
                 path = graph.graph_path(state.product.id, account) if state.product else []
-                accounts.append(account.model_copy(update={'graph_path': path, 'draft': draft.view() if draft else None}))
+                followups = [record.view() for step in (2, 3) if (record := graph.draft(draft_id(account, step)))] if draft else []
+                accounts.append(account.model_copy(update={'graph_path': path, 'draft': draft.view() if draft else None, 'sequence': followups}))
 
             leads = []
             drafts_by_account = {account.id: account.draft for account in accounts}
+            accounts_by_id = {account.id: account for account in accounts}
             for lead in state.leads.values():
                 draft = drafts_by_account.get(lead.account_id)
+                if account := accounts_by_id.get(lead.account_id):
+                    lead = lead.model_copy(update={'industry': lead.industry or account.industry, 'tier': lead.tier or account.tier})
                 if lead.stage == 'matched' and draft:
                     if draft.dispatch_status == 'pending_outcome':
                         action = 'Verify the pending send outcome in the controlled inbox'
@@ -109,14 +123,20 @@ class Workflow:
                 usage = Usage(enrichment_cost=float(self.settings.flexprice_enrichment_cost))
             return Workspace(
                 product=state.product, icp=state.latest_icp, approved_icp_revision=state.approved_icp_revision,
-                accounts=accounts, competitor=state.competitor, activity=list(reversed(state.activity[-60:])),
+                accounts=accounts, competitor=state.competitor,
+                competitors=state.competitors or ([state.competitor] if state.competitor else []),
+                activity=list(reversed(state.activity[-60:])),
                 pipeline=Pipeline(
                     leads=leads, events=state.pipeline_events, counts={stage: stage_counts[stage] for stage in PIPELINE_STAGES},
                     enriched_count=sum(account.enrichment_status == 'verified' for account in accounts),
-                    pending_approval_count=sum(bool(a.draft and a.draft.review_status == 'pending_review') for a in accounts),
+                    pending_approval_count=sum(d.review_status == 'pending_review' for a in accounts
+                                               for d in ([a.draft] if a.draft else []) + a.sequence),
                     matched_to_contacted_rate=reached_contacted / len(leads) if leads else None,
+                    analytics=funnel_analytics(leads, state.pipeline_events),
+                    gmail_feedback_configured=self.settings.gmail_feedback_configured,
                 ),
                 usage=usage,
+                research_schedule=research_schedule(state, self.settings.research_refresh_minutes),
             )
 
         return self.store.read(view)
@@ -124,6 +144,7 @@ class Workflow:
     def generate_icp(self, request: ProductInput, actor: str) -> Workspace:
         product = Product(id=stable_id('product', request.name, request.description), **request.model_dump())
         output, expansion = make_profile(self.providers, product)
+        output.fields.industry_codes = validate_codes(output.fields.industry_codes)
         confidence = {name: value if getattr(output.fields, name) else 0 for name, value in output.confidence.model_dump().items()}
 
         def save(graph: GraphTransaction, state: State) -> None:
@@ -134,8 +155,11 @@ class Workflow:
             state.approved_icp_revision = None
             state.discovery_revision = None
             state.research_batch = None
+            state.research_completed_at = None
+            state.research_scheduled_attempt_at = None
             state.accounts = []
             state.competitor = None
+            state.competitors = []
             add_activity(state, 'icp_generated', actor, 'An editable ICP was generated with source-backed expansion where available.', revision=revision)
 
         self.store.write(save)
@@ -147,6 +171,7 @@ class Workflow:
             if not current or current.revision != request.revision:
                 raise SignalError('stale_icp_revision', 'Refresh and approve the current ICP revision.')
             fields = request.fields.model_copy(deep=True)
+            fields.industry_codes = validate_codes(fields.industry_codes, strict=True)
             expansion = current.expansion
             if request.expansion_decision in ('accept', 'edit'):
                 if not expansion:
@@ -169,21 +194,25 @@ class Workflow:
             state.approved_icp_revision = revision
             state.discovery_revision = None
             state.research_batch = None
+            state.research_completed_at = None
+            state.research_scheduled_attempt_at = None
             state.accounts = []
             state.competitor = None
+            state.competitors = []
             add_activity(state, 'icp_approved', actor, 'The edited ICP revision was approved.', revision=revision)
 
         self.store.write(approve)
         return self.workspace()
 
-    def discover(self, revision: int, actor: str, *, refresh: bool = False) -> Workspace:
+    def discover(self, revision: int, actor: str, *, refresh: bool = False, deeper_sources: bool = False) -> Workspace:
         with self._discovery_lock:
-            completed = self.store.read(lambda graph, state: state.discovery_revision == icp_current(state, revision).revision)
+            completed = self.store.read(lambda graph, state: state.discovery_revision == icp_current(state, revision).revision
+                                        and (not deeper_sources or bool(state.research_batch and state.research_batch.deeper_sources)))
             if completed and not refresh:
                 return self.workspace()
-            return self._run_discovery(revision, actor, refresh=refresh)
+            return self._run_discovery(revision, actor, refresh=refresh, deeper_sources=deeper_sources)
 
-    def _run_discovery(self, revision: int, actor: str, *, refresh: bool) -> Workspace:
+    def _run_discovery(self, revision: int, actor: str, *, refresh: bool, deeper_sources: bool = False) -> Workspace:
         product, icp, batch = self.store.read(lambda graph, state: (state.product, icp_current(state, revision), state.research_batch))
         if not product:
             raise SignalError('product_missing', 'Generate an ICP from a product first.')
@@ -192,17 +221,18 @@ class Workflow:
             state.research_batch = batch
             state.discovery_revision = None
 
-        if refresh or not batch or batch.revision != revision:
-            batch = gather_research(self.providers, product, icp, bool(self.settings.nexla_sync_url), self.settings.discovery_domains)
+        if refresh or not batch or batch.revision != revision or (deeper_sources and not batch.deeper_sources):
+            batch = gather_research(self.providers, product, icp, bool(self.settings.nexla_sync_url),
+                                    self.settings.discovery_domains, deeper_sources=deeper_sources)
             self.store.write(cache)
 
-        accounts, competitor = analyze_research(self.providers, product, icp, batch)
+        accounts, competitors = analyze_research(self.providers, product, icp, batch)
         if not batch.focused_search_used and (len(accounts) < 2 or not any(a.recommendation == 'contact' for a in accounts)):
             previous_sources = batch.prospects
             batch = focus_research(self.providers, product, icp, batch, accounts, self.settings.discovery_domains)
             self.store.write(cache)
             if batch.prospects != previous_sources:
-                accounts, competitor = analyze_research(self.providers, product, icp, batch)
+                accounts, competitors = analyze_research(self.providers, product, icp, batch)
 
         def save(graph: GraphTransaction, state: State) -> None:
             icp_current(state, revision)
@@ -217,20 +247,141 @@ class Workflow:
                         state.leads[account.id] = Lead(
                             account_id=account.id, company=account.name, role=account.buyer_role, fit_score=account.fit_score,
                             actor='system', updated_at=account.researched_at, next_action='Enrich this matched account',
+                            industry=account.industry, tier=account.tier,
                         )
                 elif account.id in state.leads and state.leads[account.id].stage == 'matched':
                     state.leads[account.id].next_action = 'Review the current research before outreach'
-            graph.save_discovery(product, accounts, competitor)
+            graph.save_discovery(product, accounts, competitors)
             state.accounts = accounts
-            state.competitor = competitor
+            state.competitors = competitors
+            state.competitor = competitors[0] if competitors else None
             state.discovery_revision = revision
+            state.research_completed_at = utcnow()
             add_activity(state, 'discovery_completed', actor, f'Saved {len(accounts)} sourced accounts for the approved ICP.', revision=revision)
-            if competitor:
-                add_activity(state, 'competitor_sourced', 'system', 'A competitor comparison was saved with public citations.')
+            if competitors:
+                add_activity(state, 'competitor_sourced', 'system', f'{len(competitors)} competitor comparisons were saved with public citations.')
             if batch.nexla_status:
                 add_activity(state, 'nexla_discovery', 'system', batch.nexla_status)
 
         self.store.write(save)
+        return self.workspace()
+
+    def refresh_research_due(self) -> bool:
+        interval = self.settings.research_refresh_minutes
+        if not interval:
+            return False
+
+        def due(state: State) -> bool:
+            schedule = research_schedule(state, interval)
+            return bool(state.approved_icp_revision and schedule.next_due_at and schedule.next_due_at <= utcnow())
+
+        def claim(graph: GraphTransaction, state: State):
+            if not due(state):
+                return None
+            icp_current(state, state.approved_icp_revision)
+            state.research_scheduled_attempt_at = utcnow()
+            return state.approved_icp_revision, bool(state.research_batch and state.research_batch.deeper_sources)
+
+        with self._discovery_lock:
+            if not self.store.read(lambda graph, state: due(state)):
+                return False
+            if not (job := self.store.write(claim)):
+                return False
+            revision, deeper = job
+            self._run_discovery(revision, 'system', refresh=True, deeper_sources=deeper)
+            return True
+
+    def graph_insights(self, account_id: str) -> list[GraphInsight]:
+        return self.store.read(lambda graph, state: graph.insights(get_account(state, account_id)))
+
+    def change_pipeline(self, account_id: str, request: PipelineChange, actor: str) -> Workspace:
+        def change(graph: GraphTransaction, state: State) -> None:
+            lead = state.leads.get(account_id)
+            if not lead:
+                raise SignalError('lead_not_found', 'This lead is not in the pipeline.', 404)
+            if lead.stage != request.expected_stage:
+                raise SignalError('stale_pipeline_stage', 'Refresh the pipeline and review the latest stage.')
+            allowed = {'contacted': {'replied', 'closed_lost'}, 'replied': {'meeting_booked', 'closed_lost'},
+                       'meeting_booked': {'closed_lost'}}
+            if request.to_stage not in allowed.get(lead.stage, ()):
+                raise SignalError('invalid_stage_transition', 'Select the next stage after the confirmed contact.', 422)
+            if (request.to_stage == 'closed_lost') != bool(request.outcome):
+                raise SignalError('pipeline_outcome_required', 'Choose a won or lost outcome when closing a lead.', 422)
+            if request.outcome == 'won' and lead.stage != 'meeting_booked':
+                raise SignalError('meeting_required', 'Book a meeting before marking the lead as won.', 422)
+            action = {'replied': 'reply', 'meeting_booked': 'meeting', 'closed_lost': 'close'}[request.to_stage]
+            event = PipelineEvent(id=str(uuid4()), account_id=account_id, from_stage=lead.stage,
+                                  to_stage=request.to_stage, actor=actor, at=utcnow(), test_send=False, action=action,
+                                  source='rep', note=clean_text(request.note, 250) or None, outcome=request.outcome)
+            self._record_pipeline(graph, state, lead, event)
+
+        self.store.write(change)
+        return self.workspace()
+
+    @staticmethod
+    def _record_pipeline(graph: GraphTransaction, state: State, lead: Lead, event: PipelineEvent, prior_send: str | None = None) -> None:
+        lead.stage = event.to_stage
+        lead.actor = event.actor
+        lead.updated_at = event.at
+        lead.outcome = event.outcome or lead.outcome
+        if event.action == 'bounce':
+            lead.bounced = True
+            lead.next_action = 'Review the test inbox bounce'
+        else:
+            lead.next_action = {
+                'contacted': 'Review the test delivery', 'replied': 'Schedule a meeting',
+                'meeting_booked': 'Record the outcome', 'closed_lost': 'Review the closed outcome',
+            }[event.to_stage]
+        if event.action != 'send':
+            add_activity(state, f'pipeline_{event.action}', event.actor,
+                         'A Gmail bounce was recorded.' if event.action == 'bounce' else f'Lead moved to {event.to_stage.replace("_", " ")}.',
+                         account_id=lead.account_id, draft_id=event.draft_id, revision=event.revision)
+        if event.action == 'reply' and prior_send is None:
+            prior_send = next((item.id for item in reversed(state.pipeline_events) if item.account_id == lead.account_id and item.action == 'send'), None)
+        graph.record_pipeline_event(event, prior_send)
+        state.pipeline_events.append(event)
+
+    def sync_gmail_feedback(self) -> Workspace:
+        if not self.settings.gmail_feedback_configured:
+            raise ProviderError('Gmail', 'requires the controlled mailbox metadata refresh token.', 503)
+
+        def read_sends(graph: GraphTransaction, state: State) -> dict[str, PipelineEvent]:
+            result = {}
+            for event in reversed(state.pipeline_events):
+                if event.action != 'send' or not event.draft_id:
+                    continue
+                draft = graph.draft(event.draft_id)
+                if draft and draft.dispatch and draft.dispatch.provider_message_id and draft.current.test_recipient == self.settings.test_recipient:
+                    result[draft.dispatch.provider_message_id] = event
+                if len(result) == 8:
+                    break
+            return result
+
+        with self._feedback_lock:
+            sends = self.store.read(read_sends)
+            if not sends:
+                return self.workspace()
+            feedback = self.providers.gmail_feedback(list(sends))
+
+            def save(graph: GraphTransaction, state: State) -> None:
+                recorded = {event.id for event in state.pipeline_events}
+                for message_id, items in feedback.items():
+                    send = sends.get(message_id)
+                    if not send or not (lead := state.leads.get(send.account_id)):
+                        continue
+                    for item in items:
+                        key = stable_id('feedback', item.id)
+                        if key in recorded:
+                            continue
+                        to_stage = 'replied' if item.kind == 'reply' and lead.stage == 'contacted' else lead.stage
+                        event = PipelineEvent(id=key, account_id=lead.account_id, draft_id=send.draft_id,
+                                              revision=send.revision, from_stage=lead.stage, to_stage=to_stage,
+                                              actor='system', at=utcnow(), test_send=False, action=item.kind, source='gmail')
+                        self._record_pipeline(graph, state, lead, event, prior_send=send.id)
+                        recorded.add(key)
+
+            if feedback:
+                self.store.write(save)
         return self.workspace()
 
     def _draft_inputs(self, graph: GraphTransaction, state: State, account_id: str):
@@ -359,7 +510,10 @@ class Workflow:
                 enriched = Enriched(account.enrichment_status, account.contact)
 
             role = enriched.contact.role if enriched.status == 'verified' and enriched.contact else account.buyer_role
-            copy, synthesis_mode = write_copy(self.providers, product, account, evidence_id, role)
+            variant = 'A' if int(stable_id('variant', account.id)[-1], 16) % 2 == 0 else 'B'
+            capability = product.capabilities[0 if variant == 'A' else -1] if product.capabilities else product.description
+            proposition = clean_text(capability, 150)
+            copy, synthesis_mode = write_copy(self.providers, product, account, evidence_id, role, variant, proposition)
             validate_copy(copy.subject, copy.body)
 
             def save(graph: GraphTransaction, state: State) -> UsageEvent | None:
@@ -378,6 +532,7 @@ class Workflow:
                     revision=revision, subject=copy.subject, body=copy.body, test_recipient=self.settings.test_recipient,
                     evidence_ids=list(dict.fromkeys(copy.evidence_ids)), role_based=enriched.status != 'verified',
                     synthesis_mode=synthesis_mode, actor='system', at=utcnow(),
+                    message_variant=variant, value_proposition=proposition if synthesis_mode == 'claude' else None,
                 )
                 if record:
                     record.revisions.append(version)
@@ -395,6 +550,52 @@ class Workflow:
                 self._submit_meter(meter)
             return self.workspace()
 
+    def create_sequence(self, account_id: str, actor: str) -> Workspace:
+        with self._draft_generation_lock:
+            def load(graph: GraphTransaction, state: State):
+                account = get_account(state, account_id)
+                icp_current(state, account.icp_revision)
+                first = graph.draft(draft_id(account))
+                if not first or not state.product:
+                    raise SignalError('initial_draft_required', 'Write the initial email first.', 422)
+                validate_account_evidence(account, first.current)
+                return account, state.product, first, bool(graph.draft(draft_id(account, 2)))
+
+            account, product, first, exists = self.store.read(load)
+            if exists:
+                return self.workspace()
+            evidence = [item for item in account.evidence if item.id in first.current.evidence_ids]
+            copy = draft_followups(self.providers, product, account, first.current.subject, first.current.body, evidence)
+            validate_copy(copy.follow_up_subject, copy.follow_up_body)
+            validate_copy('LinkedIn follow-up', copy.linkedin_body)
+            if len(copy.follow_up_body.split()) > 90:
+                raise SignalError('followup_too_long', 'The generated follow-up exceeded the 90-word limit. Try again.', 422)
+
+            def save(graph: GraphTransaction, state: State) -> None:
+                current = get_account(state, account_id)
+                icp_current(state, account.icp_revision)
+                version = graph.draft(first.id)
+                if not version or version.current != first.current or current.researched_at != account.researched_at:
+                    raise SignalError('draft_changed', 'Refresh and use the latest draft and research.')
+                if graph.draft(draft_id(account, 2)):
+                    return
+                for step, subject, body, channel, recipient in (
+                    (2, copy.follow_up_subject, copy.follow_up_body, 'email', self.settings.test_recipient),
+                    (3, 'LinkedIn follow-up', copy.linkedin_body, 'linkedin', self.settings.linkedin_test_profile_url),
+                ):
+                    key = draft_id(account, step)
+                    next_version = first.current.model_copy(update={
+                        'revision': 1, 'subject': subject, 'body': body, 'channel': channel,
+                        'test_recipient': recipient, 'actor': 'system', 'at': utcnow(), 'synthesis_mode': 'claude',
+                    })
+                    graph.save_draft(Draft(id=key, account_id=account_id, icp_revision=account.icp_revision,
+                                           revisions=[next_version], sequence_step=step))
+                    add_activity(state, 'sequence_step_drafted', actor, f'Outreach step {step} was saved for human review.',
+                                 account_id=account_id, draft_id=key, revision=1)
+
+            self.store.write(save)
+            return self.workspace()
+
     def edit_draft(self, key: str, request: EditDraft, actor: str) -> Workspace:
         validate_copy(request.subject, request.body)
 
@@ -402,10 +603,14 @@ class Workflow:
             draft = current_draft(graph, state, key, request.expected_revision, lock=True)
             require_open_draft(draft)
             revision = draft.current.revision + 1
+            recipient = self.settings.linkedin_test_profile_url if draft.current.channel == 'linkedin' else self.settings.test_recipient
+            if draft.current.channel == 'linkedin' and len(request.body) > 450:
+                raise SignalError('linkedin_message_too_long', 'Keep this LinkedIn message to 450 characters.', 422)
             draft.revisions.append(draft.current.model_copy(update={
                 'revision': revision, 'subject': request.subject, 'body': request.body,
-                'test_recipient': self.settings.test_recipient, 'actor': actor, 'at': utcnow(),
+                'test_recipient': recipient, 'actor': actor, 'at': utcnow(),
             }))
+            draft.scheduled_at = None
             graph.save_draft(draft)
             add_activity(state, 'draft_edited', actor, 'A new draft revision requires fresh approval.',
                          account_id=draft.account_id, draft_id=key, revision=revision)
@@ -423,7 +628,7 @@ class Workflow:
                 return draft, state.product, [item for item in account.evidence if item.id in draft.current.evidence_ids]
 
             draft, product, evidence = self.store.read(read_for_review)
-            if draft.current.actor != 'system' and product:
+            if (draft.current.actor != 'system' or draft.sequence_step > 1) and product:
                 check_copy(self.providers, product, evidence, draft.current.subject, draft.current.body)
 
         def review(graph: GraphTransaction, state: State) -> None:
@@ -437,6 +642,8 @@ class Workflow:
                 approved_snapshot=draft.current if request.decision == 'approve' else None,
             )
             draft.reviews.append(entry)
+            if request.decision == 'reject':
+                draft.scheduled_at = None
             graph.save_draft(draft)
             add_activity(state, 'draft_approved' if request.decision == 'approve' else 'draft_rejected', actor,
                          f'The current draft revision was {"approved" if request.decision == "approve" else "rejected"}.',
@@ -445,14 +652,69 @@ class Workflow:
         self.store.write(review)
         return self.workspace()
 
+    @staticmethod
+    def _require_approved(draft: Draft) -> None:
+        review = draft.review
+        if not review or review.decision != 'approve' or review.approved_snapshot != draft.current:
+            raise SignalError('approval_required', 'Approve this exact draft revision before acting on it.')
+
+    @staticmethod
+    def _sequence_ready(graph: GraphTransaction, state: State, draft: Draft) -> None:
+        if draft.sequence_step > 1:
+            account = get_account(state, draft.account_id)
+            previous = graph.draft(draft_id(account, draft.sequence_step - 1))
+            if state.leads[draft.account_id].stage != 'contacted' or not previous or not previous.dispatch or previous.dispatch.status != 'sent':
+                raise SignalError('followup_not_ready', 'Complete the previous touch first. The sequence pauses after a reply or close.')
+        if draft.scheduled_at and draft.scheduled_at > utcnow():
+            raise SignalError('followup_scheduled', 'This draft is scheduled for a later time.')
+
+    def schedule_draft(self, key: str, request: ScheduleDraft, actor: str) -> Workspace:
+        def schedule(graph: GraphTransaction, state: State) -> None:
+            draft = current_draft(graph, state, key, request.revision, lock=True)
+            require_open_draft(draft)
+            self._require_approved(draft)
+            if draft.sequence_step == 1:
+                raise SignalError('followup_required', 'Scheduling is available for follow-up steps.', 422)
+            if request.scheduled_at and request.scheduled_at <= utcnow():
+                raise SignalError('schedule_in_past', 'Choose a time in the future.', 422)
+            draft.scheduled_at = request.scheduled_at
+            graph.save_draft(draft)
+            add_activity(state, 'sequence_scheduled' if request.scheduled_at else 'sequence_unscheduled', actor,
+                         'An approved follow-up schedule changed.', account_id=draft.account_id,
+                         draft_id=key, revision=request.revision)
+
+        self.store.write(schedule)
+        return self.workspace()
+
+    def prepare_linkedin(self, key: str, revision: int, actor: str) -> Workspace:
+        def prepare(graph: GraphTransaction, state: State) -> None:
+            draft = current_draft(graph, state, key, revision, lock=True)
+            self._require_approved(draft)
+            self._sequence_ready(graph, state, draft)
+            validate_account_evidence(get_account(state, draft.account_id), draft.current)
+            if draft.current.channel != 'linkedin' or not self.settings.linkedin_test_profile_url or draft.current.test_recipient != self.settings.linkedin_test_profile_url:
+                raise SignalError('linkedin_test_profile_required', 'Set the controlled LinkedIn profile and approve the exact recipient.', 422)
+            if state.leads[draft.account_id].bounced:
+                raise SignalError('previous_bounce', 'Review the delivery failure before preparing another message.')
+            if not draft.prepared_at:
+                draft.prepared_at = utcnow()
+                graph.save_draft(draft)
+                add_activity(state, 'linkedin_handoff_prepared', actor,
+                             'An approved LinkedIn message was prepared for the controlled profile.',
+                             account_id=draft.account_id, draft_id=key, revision=revision)
+
+        self.store.write(prepare)
+        return self.workspace()
+
     def send_draft(self, key: str, revision: int, actor: str) -> Workspace:
         def reserve(graph: GraphTransaction, state: State) -> DraftRevision | None:
             draft = current_draft(graph, state, key, revision, lock=True)
             if draft.dispatch:
                 return None
-            review = draft.review
-            if not review or review.decision != 'approve' or review.approved_snapshot != draft.current:
-                raise SignalError('approval_required', 'Approve this exact draft revision before sending.')
+            self._require_approved(draft)
+            if draft.current.channel != 'email':
+                raise SignalError('linkedin_handoff_required', 'Use the LinkedIn action for this approved draft.', 422)
+            self._sequence_ready(graph, state, draft)
             validate_account_evidence(get_account(state, draft.account_id), draft.current)
             recipient = self.settings.test_recipient
             if not recipient or draft.current.test_recipient != recipient:
@@ -461,6 +723,8 @@ class Workflow:
                 raise SignalError('recipient_suppressed', 'The configured recipient is suppressed.')
             if not self.settings.gmail_configured:
                 raise ProviderError('Gmail', 'OAuth settings or the controlled test recipient are missing.', 503)
+            if state.leads[draft.account_id].bounced:
+                raise SignalError('previous_bounce', 'Review the delivery failure before sending another message.')
             draft.dispatch = DispatchAttempt(revision=revision, actor=actor, at=utcnow())
             graph.save_draft(draft)
             add_activity(state, 'dispatch_reserved', actor, 'One test send attempt was reserved.',
@@ -492,15 +756,15 @@ class Workflow:
                          account_id=draft.account_id, draft_id=key, revision=revision)
             if attempt.status == 'sent':
                 lead = state.leads[draft.account_id]
-                stage = lead.stage
-                lead.stage = 'contacted'
                 lead.test_send = True
-                lead.actor = attempt.actor
-                lead.updated_at = attempt.finished_at
-                lead.next_action = 'Review the test delivery'
-                state.pipeline_events.append(PipelineEvent(
+                if lead.stage == 'matched':
+                    lead.channel = 'email'
+                    lead.message_variant = draft.current.message_variant
+                    lead.value_proposition = draft.current.value_proposition
+                self._record_pipeline(graph, state, lead, PipelineEvent(
                     id=stable_id('pipeline', key, str(revision)), account_id=lead.account_id, draft_id=key,
-                    revision=revision, from_stage=stage, to_stage='contacted', actor=attempt.actor, at=attempt.finished_at,
+                    revision=revision, from_stage=lead.stage, to_stage='contacted' if lead.stage == 'matched' else lead.stage,
+                    actor=attempt.actor, at=attempt.finished_at,
                 ))
                 return self._queue_extra_meter(state, 'outreach_sent', lead.account_id, key, revision)
             return None

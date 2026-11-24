@@ -1,4 +1,4 @@
-import type { IcpApproveInput, IcpGenerateInput, IntakeFields, IntakeMessage, IntakeReply, Workspace } from "./types";
+import type { GraphInsight, IcpApproveInput, IcpGenerateInput, IntakeFields, IntakeMessage, IntakeReply, PipelineChange, Workspace } from "./types";
 
 // Same origin in production. For local dev against uvicorn, set NEXT_PUBLIC_API_BASE=http://localhost:8000
 // and make the backend's SIGNAL_PUBLIC_ORIGIN match the Next dev origin.
@@ -44,15 +44,24 @@ export const api = {
     request<IntakeReply>("POST", "/api/intake/chat", { product, history, message }),
   generateIcp: (input: IcpGenerateInput) => request<Workspace>("POST", "/api/icp/generate", input),
   approveIcp: (input: IcpApproveInput) => request<Workspace>("POST", "/api/icp/approve", input),
-  discover: (revision: number, refresh = false) =>
-    request<Workspace>("POST", "/api/discover", refresh ? { revision, refresh } : { revision }),
+  discover: (revision: number, refresh = false, deeper_sources = false) =>
+    request<Workspace>("POST", "/api/discover", { revision, refresh, deeper_sources }),
   draft: (accountId: string) => request<Workspace>("POST", `/api/accounts/${encodeURIComponent(accountId)}/draft`),
+  graphInsights: (accountId: string) => request<GraphInsight[]>("GET", `/api/accounts/${encodeURIComponent(accountId)}/insights`),
+  sequence: (accountId: string) => request<Workspace>("POST", `/api/accounts/${encodeURIComponent(accountId)}/sequence`),
   saveDraft: (draftId: string, expected_revision: number, subject: string, body: string) =>
     request<Workspace>("PATCH", `/api/drafts/${encodeURIComponent(draftId)}`, { expected_revision, subject, body }),
   review: (draftId: string, revision: number, decision: "approve" | "reject") =>
     request<Workspace>("POST", `/api/drafts/${encodeURIComponent(draftId)}/review`, { revision, decision }),
   send: (draftId: string, revision: number) =>
     request<Workspace>("POST", `/api/drafts/${encodeURIComponent(draftId)}/send`, { revision }),
+  schedule: (draftId: string, revision: number, scheduled_at: string | null) =>
+    request<Workspace>("POST", `/api/drafts/${encodeURIComponent(draftId)}/schedule`, { revision, scheduled_at }),
+  prepareLinkedIn: (draftId: string, revision: number) =>
+    request<Workspace>("POST", `/api/drafts/${encodeURIComponent(draftId)}/linkedin-handoff`, { revision }),
+  moveLead: (accountId: string, change: PipelineChange) =>
+    request<Workspace>("POST", `/api/pipeline/${encodeURIComponent(accountId)}/stage`, change),
+  syncFeedback: () => request<Workspace>("POST", "/api/feedback/gmail/sync"),
   // Proposed route, not in the contract yet: returns a short-lived ElevenLabs signed URL for the
   // private Signal Assistant agent. JSON body so the backend's same-origin write checks apply.
   chatSession: () => request<{ signed_url: string }>("POST", "/api/chat/session", {}),

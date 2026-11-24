@@ -1,16 +1,16 @@
 import json
 import re
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from .errors import ProviderError, SignalError
 from .models import (
     Account, Competitor, Confidence, Description, Evidence, Expansion, Icp, IcpFields,
-    InputModel, IntakeChat, IntakeFields, IntakeReply, NegativeSignal, Product, ResearchBatch, ShortText,
-    Signal, SignalKind, Source, SynthesisMode,
+    InputModel, IntakeChat, IntakeFields, IntakeReply, MarketSignal, NegativeSignal, Product, PublicAffiliation,
+    ResearchBatch, ShortText, Signal, SignalKind, Source, SynthesisMode,
 )
 from .providers import Providers, as_date, clean_text, normalize_domain, stable_id, utcnow
 
@@ -36,6 +36,7 @@ class ExpansionOutput(InputModel):
 
 class IcpConfidence(InputModel):
     industries: Confidence = 0
+    industry_codes: Confidence = 0
     geography: Confidence = 0
     headcount_band: Confidence = 0
     revenue_band: Confidence = 0
@@ -72,6 +73,19 @@ class FitEvidence(InputModel):
     geography: Quote | None = None
 
 
+class AffiliationOutput(InputModel):
+    person: ShortText
+    organization: ShortText
+    kind: Literal['employment', 'education']
+    evidence: Quote
+
+
+class MarketSignalOutput(InputModel):
+    kind: Literal['buying_evaluation', 'renewal', 'churn']
+    vendor: ShortText | None = None
+    evidence: Quote
+
+
 class CandidateOutput(InputModel):
     name: str
     domain: str
@@ -82,10 +96,13 @@ class CandidateOutput(InputModel):
     fit: FitEvidence = Field(default_factory=FitEvidence)
     signal: SignalOutput | None = None
     negative: NegativeOutput | None = None
+    affiliations: list[AffiliationOutput] = Field(default_factory=list, max_length=4)
+    market_signals: list[MarketSignalOutput] = Field(default_factory=list, max_length=4)
 
 
 class CompetitorOutput(InputModel):
     name: str
+    category: Literal['direct', 'indirect', 'alternative'] = 'direct'
     positioning: str
     positioning_evidence: Quote
     differentiator: str
@@ -97,12 +114,32 @@ class CompetitorOutput(InputModel):
 class DiscoveryOutput(InputModel):
     accounts: list[CandidateOutput]
     competitor: CompetitorOutput | None = None
+    competitors: list[CompetitorOutput] = Field(default_factory=list, max_length=6)
 
 
 class CopyOutput(InputModel):
     subject: ShortText
     body: Description
     evidence_ids: list[ShortText] = Field(min_length=1, max_length=6)
+
+
+class SequenceOutput(InputModel):
+    follow_up_subject: ShortText
+    follow_up_body: Description
+    linkedin_body: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=450)]
+
+
+def draft_followups(providers: Providers, product: Product, account: Account, initial_subject: str, initial_body: str, evidence: list[Evidence]) -> SequenceOutput:
+    return providers.complete(
+        SequenceOutput,
+        EXTRACTION_RULE + ' Draft a second-touch follow-up email and a third-touch LinkedIn message. '
+        'Use a warm, brief tone and a low-pressure CTA for the buyer role. Keep the follow-up under 90 words and '
+        'the LinkedIn message under 450 characters. Avoid repeating the initial draft. Use only supported product '
+        'and account facts. Avoid implying an email was actually delivered or a meeting has occurred.',
+        context(product=public_product(product), role=account.buyer_role, initial_subject=initial_subject,
+                initial_body=initial_body, evidence=[item.model_dump(mode='json') for item in evidence]),
+        max_tokens=1300,
+    )
 
 
 class CopyCheck(InputModel):
@@ -153,9 +190,9 @@ def evidence_for(quote: Quote | None, sources: dict[str, Source], now: datetime,
     host = urlsplit(source.url).hostname or ''
     if source.provider == 'nexla':
         kind = 'partner'
-    elif host in ('sec.gov', 'www.sec.gov'):
+    elif host.endswith(('.sec.gov', '.ferc.gov', '.eia.gov')) or host in ('sec.gov', 'ferc.gov', 'eia.gov'):
         kind = 'filing'
-    elif any(part in urlsplit(source.url).path.lower() for part in ('/jobs', '/careers')):
+    elif any(part in urlsplit(source.url).path.lower() for part in ('/jobs', '/job/', '/careers')) or host.endswith(('.myworkdayjobs.com', '.greenhouse.io', '.lever.co')):
         kind = 'job'
     elif domain and (host == domain or host.endswith('.' + domain)):
         kind = 'company'
@@ -177,6 +214,8 @@ def make_profile(providers: Providers, product: Product) -> tuple[ProfileOutput,
     out = providers.complete(
         ProfileOutput,
         EXTRACTION_RULE + ' Infer a suggested ICP from the product. Provide 0–1 heuristic confidence per field. '
+        'When known, suggest 2022 U.S. NAICS and SEC EDGAR SIC codes for the target buyer industry, specifying the system and number. '
+        'Omit uncertain codes. Signal validates the codes and supplies their official titles. '
         'Propose a specific adjacent segment only if a supplied source supports the rationale.',
         context(product=public_product(product), sources=sources_for_prompt(sources)),
     )
@@ -196,6 +235,17 @@ def signal_date(signal: SignalOutput, evidence: Evidence, source: Source) -> dat
         if parsed := as_date(text):
             return parsed
     return evidence.published_at
+
+
+AFFILIATION_TERMS = {
+    'employment': re.compile(r'\b(previous\w*|former(?:ly)?|prior|before|served|worked|joined)\b', re.I),
+    'education': re.compile(r'\b(graduat\w*|degree|studied|alum\w*|earned|attended)\b', re.I),
+}
+MARKET_TERMS = {
+    'buying_evaluation': re.compile(r'\b(evaluat\w*|select\w*|compar\w*|procur\w*)\b', re.I),
+    'renewal': re.compile(r'\b(renew\w*|retender\w*|contract expir\w*|contract extension)\b', re.I),
+    'churn': re.compile(r'\b(replac\w*|switch\w*|terminat\w*|discontinu\w*|migrat\w*)\b', re.I),
+}
 
 
 def make_account(candidate: CandidateOutput, icp: Icp, sources: dict[str, Source], now: datetime) -> Account | None:
@@ -257,6 +307,28 @@ def make_account(candidate: CandidateOutput, icp: Icp, sources: dict[str, Source
             ),
         )
 
+    affiliations = []
+    for item in candidate.affiliations:
+        proof = resolve(item.evidence)
+        person, organization = clean_text(item.person, 160), clean_text(item.organization, 160)
+        if not proof or not person or not organization:
+            continue
+        if all(term.casefold() in proof.excerpt.casefold() for term in (person, organization, name)) and AFFILIATION_TERMS[item.kind].search(proof.excerpt):
+            affiliations.append(PublicAffiliation(person=person, organization=organization, kind=item.kind, evidence_id=proof.id))
+
+    market_signals = []
+    for item in candidate.market_signals:
+        proof = resolve(item.evidence)
+        if not proof or not MARKET_TERMS[item.kind].search(proof.excerpt):
+            continue
+        vendor = clean_text(item.vendor, 160) or None
+        if item.kind == 'buying_evaluation' and proof.source_type != 'job':
+            continue
+        if item.kind in ('renewal', 'churn') and (not vendor or vendor.casefold() not in proof.excerpt.casefold()):
+            continue
+        market_signals.append(MarketSignal(id=stable_id('market', account_id, item.kind, proof.id), kind=item.kind,
+                                           vendor=vendor, evidence_id=proof.id, observed_on=proof.published_at))
+
     if negative and negative.hard_exclusion:
         recommendation, tier, reason = 'reject', 'C', negative.reason
     elif negative:
@@ -275,6 +347,7 @@ def make_account(candidate: CandidateOutput, icp: Icp, sources: dict[str, Source
         buyer_role=next(iter(icp.fields.buyer_titles), None), fit_score=fit, intent_score=intent,
         tier=tier, recommendation=recommendation, reason=reason, researched_at=now, icp_revision=icp.revision,
         evidence=list(evidence.values()), signal=signal, negative_signal=negative,
+        affiliations=affiliations, market_signals=market_signals,
     )
 
 
@@ -290,11 +363,11 @@ def make_competitor(candidate: CompetitorOutput | None, sources: dict[str, Sourc
     return Competitor(
         name=clean_text(candidate.name), positioning=clean_text(candidate.positioning),
         differentiator=clean_text(candidate.differentiator), pricing=clean_text(candidate.pricing) if pricing else None,
-        evidence=list(records.values()),
+        evidence=list(records.values()), category=candidate.category,
     )
 
 
-def gather_research(providers: Providers, product: Product, icp: Icp, use_nexla: bool, source_domains: tuple[str, ...]) -> ResearchBatch:
+def gather_research(providers: Providers, product: Product, icp: Icp, use_nexla: bool, source_domains: tuple[str, ...], *, deeper_sources: bool = False) -> ResearchBatch:
     fields = icp.fields
     industry = clean_text(', '.join(fields.industries[:2]), 100) or clean_text(product.description, 100)
     geography = clean_text(', '.join(fields.geography[:2]), 60)
@@ -304,7 +377,7 @@ def gather_research(providers: Providers, product: Product, icp: Icp, use_nexla:
         limit=10, include_details=bool(source_domains), source_domains=source_domains,
     )
     try:
-        competitors = providers.search(f'{clean_text(product.description, 130)} vendors software platform official pricing capabilities competitors', limit=3)
+        competitors = providers.search(f'{clean_text(product.description, 130)} vendors software direct indirect spreadsheet consulting alternatives official pricing capabilities', limit=7)
     except ProviderError:
         competitors = []
     nexla_status = None
@@ -316,7 +389,15 @@ def gather_research(providers: Providers, product: Product, icp: Icp, use_nexla:
         except ProviderError:
             nexla_status = 'Nexla discovery was unavailable. Tavily sources are shown.'
 
-    return ResearchBatch(revision=icp.revision, prospects=prospects, competitors=competitors, nexla_status=nexla_status)
+    if deeper_sources:
+        for focus in ('official regulatory filings permit applications government filings', 'original company careers job postings evaluating tools software procurement'):
+            try:
+                prospects.extend(providers.search(f'{industry} {geography} {focus} {criteria}', limit=5, source_domains=source_domains))
+            except ProviderError:
+                continue
+
+    return ResearchBatch(revision=icp.revision, prospects=list({source.id: source for source in prospects}.values()),
+                         competitors=competitors, nexla_status=nexla_status, deeper_sources=deeper_sources)
 
 
 def focus_research(providers: Providers, product: Product, icp: Icp, batch: ResearchBatch, accounts: list[Account], source_domains: tuple[str, ...]) -> ResearchBatch:
@@ -333,9 +414,9 @@ def focus_research(providers: Providers, product: Product, icp: Icp, batch: Rese
     return batch.model_copy(update={'prospects': list(sources.values()), 'focused_search_used': True})
 
 
-def analyze_research(providers: Providers, product: Product, icp: Icp, batch: ResearchBatch) -> tuple[list[Account], Competitor | None]:
+def analyze_research(providers: Providers, product: Product, icp: Icp, batch: ResearchBatch) -> tuple[list[Account], list[Competitor]]:
     if not batch.prospects:
-        return [], None
+        return [], []
     sources = {source.id: source for source in batch.prospects + batch.competitors}
     out = providers.complete(
         DiscoveryOutput,
@@ -343,8 +424,14 @@ def analyze_research(providers: Providers, product: Product, icp: Icp, batch: Re
         'or a literal domain reference. For each aligned fit factor quote a supporting excerpt from the company or '
         'a source that names it. Product need must be tied to the product capabilities. Only claim headcount/revenue fit '
         'when the source supports the stated band. Include any dated positive signal and explicit negative signal. '
-        'For a hard exclusion, copy the matching approved ICP exclusion into matched_exclusion. Hiring is indirect. Provide one competitor '
-        'with evidence for positioning, difference from the stated product, and public pricing if found.',
+        'For a hard exclusion, copy the matching approved ICP exclusion into matched_exclusion. Hiring is indirect. '
+        'Add an affiliation only when an original company source documents an identifiable current employee and their former employer or school. '
+        'Quote the current company, the person, the shared organization and the literal relationship in one excerpt. '
+        'Add buying_evaluation only when a job posting explicitly discusses evaluating, selecting or procuring tools. '
+        'Add renewal or churn only when a source explicitly names the vendor and says a contract renews, expires, or is being replaced. '
+        'For each evidenced category provide one competitor in competitors. Direct solves the same job with similar software, '
+        'indirect solves a broader or adjacent job, and alternative uses a different approach such as a spreadsheet or consultancy. '
+        'Support positioning and differences from the stated product with public evidence. Quote public pricing if found.',
         context(product=public_product(product), approved_icp=icp.fields.model_dump(),
                 prospect_sources=sources_for_prompt(batch.prospects), competitor_sources=sources_for_prompt(batch.competitors)),
         max_tokens=4600,
@@ -363,7 +450,14 @@ def analyze_research(providers: Providers, product: Product, icp: Icp, batch: Re
     selected = ranked[:3]
     if contrast and contrast not in selected:
         selected[-1] = contrast
-    return selected, make_competitor(out.competitor, sources, now)
+    competitors = {}
+    names = set()
+    for candidate in out.competitors + ([out.competitor] if out.competitor else []):
+        competitor = make_competitor(candidate, sources, now)
+        if competitor and competitor.category not in competitors and competitor.name.casefold() not in names:
+            competitors[competitor.category] = competitor
+            names.add(competitor.name.casefold())
+    return selected, [competitors[category] for category in ('direct', 'indirect', 'alternative') if category in competitors]
 
 
 def check_copy(providers: Providers, product: Product, evidence: list[Evidence], subject: str, body: str) -> None:
@@ -380,7 +474,8 @@ def check_copy(providers: Providers, product: Product, evidence: list[Evidence],
         raise SignalError('unsupported_personalization', 'The message contains a claim unsupported by its evidence.', 422)
 
 
-def write_copy(providers: Providers, product: Product, account: Account, path_evidence_id: str, role: str) -> tuple[CopyOutput, SynthesisMode]:
+def write_copy(providers: Providers, product: Product, account: Account, path_evidence_id: str, role: str,
+               variant: str = 'A', proposition: str | None = None) -> tuple[CopyOutput, SynthesisMode]:
     evidence = {item.id: item for item in account.evidence}
     if path_evidence_id not in evidence:
         raise SignalError('graph_evidence_missing', 'The graph path did not return evidence for this account.')
@@ -389,9 +484,12 @@ def write_copy(providers: Providers, product: Product, account: Account, path_ev
         EXTRACTION_RULE + ' Draft a concise plain-text B2B email under 110 words. Use the required graph evidence ID '
         'to ground one specific claim. Use a short verbatim quotation with attribution. Use the buyer role only to choose tone. '
         'Describe one capability explicitly provided in the product without promising outcomes. '
+        'For variant A, lead with the cited buyer signal. For variant B, lead with the buyer role’s practical question. '
+        'Use the supplied value proposition only if supported by the stated product. '
         'Use a simple, question-based call to action. Do not include any email addresses. '
         'Cite the graph evidence ID and only relevant supplied evidence IDs in evidence_ids.',
-        context(product=public_product(product), company=account.name, buyer_role=role,
+        context(product=public_product(product), company=account.name, buyer_role=role, variant=variant,
+                value_proposition=proposition,
                 required_graph_evidence_id=path_evidence_id,
                 evidence=[item.model_dump(mode='json') for item in account.evidence]),
         max_tokens=600,

@@ -6,7 +6,7 @@ from neo4j.exceptions import DriverError, Neo4jError
 
 from .config import Settings
 from .errors import ProviderError
-from .models import Account, Competitor, Contact, Draft, GraphStep, Product, State
+from .models import Account, Competitor, Contact, Draft, GraphInsight, GraphStep, PipelineEvent, Product, State
 from .providers import stable_id
 
 
@@ -47,7 +47,7 @@ class GraphTransaction:
             id=draft.id, data=draft.model_dump_json(), account=draft.account_id, revision=draft.icp_revision,
         ).consume()
 
-    def save_discovery(self, product: Product, accounts: list[Account], competitor: Competitor | None) -> None:
+    def save_discovery(self, product: Product, accounts: list[Account], competitors: list[Competitor]) -> None:
         self.run(
             'MERGE (p:Product {workspace: $workspace, id: $id}) SET p.name = $name, p.description = $description',
             id=product.id, name=product.name, description=product.description,
@@ -77,8 +77,9 @@ class GraphTransaction:
                     company=account.id, id=account.signal.id, revision=account.icp_revision,
                     evidence_id=account.signal.evidence_id, signal=account.signal.model_dump(mode='json'),
                 ).consume()
+            self.save_public_signals(account)
 
-        if competitor:
+        for competitor in competitors:
             self.run(
                 'MATCH (p:Product {workspace: $workspace, id: $product}) '
                 'MERGE (c:Competitor {workspace: $workspace, id: $id}) SET c += $fields '
@@ -98,6 +99,101 @@ class GraphTransaction:
             'MERGE (p)-[:WORKS_AT]->(c)',
             account=account_id, id=contact.id, fields=contact.model_dump(),
         ).consume()
+
+    def save_public_signals(self, account: Account) -> None:
+        self.run(
+            'MATCH (c:Company {workspace: $workspace, id: $account})'
+            '-[r:HAS_MARKET_SIGNAL {icp_revision: $revision}]->(:Signal) SET r.active = false',
+            account=account.id, revision=account.icp_revision,
+        ).consume()
+        self.run(
+            'MATCH (c:Company {workspace: $workspace, id: $account})'
+            '<-[:WORKS_AT {icp_revision: $revision}]-(:Person)'
+            '-[r:PREVIOUSLY_EMPLOYED_AT|ALUMNI_OF {icp_revision: $revision}]->() SET r.active = false',
+            account=account.id, revision=account.icp_revision,
+        ).consume()
+        for affiliation in account.affiliations:
+            node_label, edge_type = ('Company', 'PREVIOUSLY_EMPLOYED_AT') if affiliation.kind == 'employment' else ('Institution', 'ALUMNI_OF')
+            self.run(
+                'MATCH (c:Company {workspace: $workspace, id: $account}) '
+                'MERGE (p:Person {workspace: $workspace, id: $person_id}) SET p.name = $person '
+                'MERGE (p)-[:WORKS_AT {icp_revision: $revision}]->(c) '
+                f'MERGE (o:{node_label} {{workspace: $workspace, id: $organization_id}}) SET o.name = $organization '
+                f'MERGE (p)-[r:{edge_type} {{icp_revision: $revision, evidence_id: $evidence_id}}]->(o) SET r.active = true',
+                account=account.id, revision=account.icp_revision, person=affiliation.person, organization=affiliation.organization,
+                person_id=stable_id('public-person', account.id, affiliation.person.casefold()),
+                organization_id=stable_id('affiliation', affiliation.organization.casefold()), evidence_id=affiliation.evidence_id,
+            ).consume()
+        for signal in account.market_signals:
+            self.run(
+                'MATCH (c:Company {workspace: $workspace, id: $account}), '
+                '(e:Evidence {workspace: $workspace, id: $evidence}) '
+                'MERGE (s:Signal {workspace: $workspace, id: $id}) SET s += $fields '
+                'MERGE (c)-[r:HAS_MARKET_SIGNAL {icp_revision: $revision}]->(s) SET r.active = true '
+                'MERGE (s)-[:EVIDENCED_BY]->(e)',
+                account=account.id, revision=account.icp_revision, id=signal.id,
+                evidence=signal.evidence_id, fields=signal.model_dump(mode='json'),
+            ).consume()
+            if signal.vendor:
+                self.run(
+                    'MATCH (s:Signal {workspace: $workspace, id: $signal}) '
+                    'MERGE (v:Competitor {workspace: $workspace, id: $vendor_id}) SET v.name = $vendor '
+                    'MERGE (s)-[:RELATES_TO]->(v)',
+                    signal=signal.id, vendor=signal.vendor, vendor_id=stable_id('competitor', signal.vendor.casefold()),
+                ).consume()
+
+    def insights(self, account: Account) -> list[GraphInsight]:
+        rows = self.run(
+            'MATCH (c:Company {workspace: $workspace, id: $account})'
+            '<-[:WORKS_AT {icp_revision: $revision}]-(p:Person)'
+            '-[r:PREVIOUSLY_EMPLOYED_AT|ALUMNI_OF {icp_revision: $revision}]->(o), '
+            '(e:Evidence {workspace: $workspace, id: r.evidence_id}) '
+            'WHERE coalesce(r.active, true) '
+            'RETURN CASE type(r) WHEN "PREVIOUSLY_EMPLOYED_AT" THEN "employment" ELSE "education" END AS kind, '
+            '[c.name, p.name, o.name] AS path, [properties(e)] AS evidence LIMIT 8 '
+            'UNION ALL '
+            'MATCH (c:Company {workspace: $workspace, id: $account})'
+            '<-[:WORKS_AT {icp_revision: $revision}]-(p:Person)'
+            '-[r:PREVIOUSLY_EMPLOYED_AT|ALUMNI_OF {icp_revision: $revision}]->(o)'
+            '<-[q:PREVIOUSLY_EMPLOYED_AT|ALUMNI_OF {icp_revision: $revision}]-(peer:Person)'
+            '-[:WORKS_AT {icp_revision: $revision}]->(peer_company:Company), '
+            '(e:Evidence {workspace: $workspace, id: r.evidence_id}), (f:Evidence {workspace: $workspace, id: q.evidence_id}) '
+            'WHERE p.id <> peer.id AND c.id <> peer_company.id AND type(r) = type(q) AND coalesce(r.active, true) AND coalesce(q.active, true) '
+            'RETURN "warm_introduction" AS kind, [p.name, o.name, peer.name, peer_company.name] AS path, '
+            '[properties(e), properties(f)] AS evidence LIMIT 8 '
+            'UNION ALL '
+            'MATCH (c:Company {workspace: $workspace, id: $account})'
+            '-[m:HAS_MARKET_SIGNAL {icp_revision: $revision}]->(s:Signal)-[:EVIDENCED_BY]->(e:Evidence) '
+            'WHERE coalesce(m.active, true) '
+            'OPTIONAL MATCH (s)-[:RELATES_TO]->(v:Competitor) '
+            'RETURN s.kind AS kind, CASE WHEN v IS NULL THEN [c.name, e.title] ELSE [c.name, v.name] END AS path, '
+            '[properties(e)] AS evidence LIMIT 12',
+            account=account.id, revision=account.icp_revision,
+        )
+        unique = {}
+        for row in rows:
+            item = GraphInsight.model_validate(dict(row))
+            unique[item.kind, tuple(item.path)] = item
+        return list(unique.values())
+
+    def record_pipeline_event(self, event: PipelineEvent, prior_send: str | None) -> None:
+        self.run(
+            'MERGE (i:Interaction {workspace: $workspace, id: $id}) SET i += $fields',
+            id=event.id, fields=event.model_dump(mode='json'),
+        ).consume()
+        if event.action == 'send':
+            self.run(
+                'MATCH (c:Company {workspace: $workspace, id: $account}), '
+                '(i:Interaction {workspace: $workspace, id: $id}) '
+                'MERGE (c)-[:CONTACTED_VIA {channel: "email", test_send: true}]->(i)',
+                id=event.id, account=event.account_id,
+            ).consume()
+        elif event.action == 'reply' and prior_send:
+            self.run(
+                'MATCH (r:Interaction {workspace: $workspace, id: $id}), '
+                '(s:Interaction {workspace: $workspace, id: $send}) MERGE (r)-[:REPLIED_TO]->(s)',
+                id=event.id, send=prior_send,
+            ).consume()
 
     def graph_path(self, product_id: str, account: Account) -> list[GraphStep]:
         row = self.run(

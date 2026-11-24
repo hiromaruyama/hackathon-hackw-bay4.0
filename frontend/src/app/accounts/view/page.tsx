@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { GraphInsights } from "@/components/graph-insights";
 import { EvidenceList, GraphPath, InlineAlert, Panel, PanelHeader, Verdict } from "@/components/signal";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -24,7 +25,7 @@ export default function AccountViewPage() {
 
 function AccountView() {
   const id = useSearchParams().get("id");
-  const { workspace, writeDraft, pending } = useWorkspace();
+  const { workspace, mode, writeDraft, pending } = useWorkspace();
   const [error, setError] = useState<ApiError | null>(null);
   const a = workspace!.accounts.find((x) => x.id === id);
 
@@ -136,6 +137,7 @@ function AccountView() {
             <PanelHeader title="Graph path" id="graph-title" />
             <GraphPath path={a.graph_path} />
           </Panel>
+          {mode === "live" ? <GraphInsights key={`${a.id}-${a.researched_at}`} accountId={a.id} /> : null}
 
           {a.draft ? (
             <Panel aria-labelledby="draft-title">

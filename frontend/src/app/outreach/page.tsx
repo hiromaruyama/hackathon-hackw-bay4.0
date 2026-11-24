@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { Lock, Send } from "lucide-react";
+import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { AskPanel } from "@/components/ask-panel";
 import { ActivityList, EvidenceList, GraphPath, InlineAlert, Panel } from "@/components/signal";
@@ -18,12 +19,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
-import { draftStateText, enrichmentText, time, verdictLabel } from "@/lib/format";
+import { dateTime, draftStateText, enrichmentText, time, verdictLabel } from "@/lib/format";
 import type { Account, Draft } from "@/lib/types";
 import { useWorkspace } from "@/lib/workspace-context";
 import { cn } from "@/lib/utils";
@@ -41,7 +44,8 @@ export default function OutreachPage() {
 function Outreach() {
   const { workspace } = useWorkspace();
   const w = workspace!;
-  const param = useSearchParams().get("account");
+  const params = useSearchParams();
+  const param = params.get("account");
   const withDrafts = w.accounts.filter((a) => a.draft);
   const account = (param ? w.accounts.find((a) => a.id === param) : null) ?? withDrafts[0];
 
@@ -60,15 +64,18 @@ function Outreach() {
     );
   }
 
-  return <Review key={account.id} account={account} draft={account.draft} others={withDrafts.filter((a) => a.id !== account.id)} />;
+  const steps = [account.draft, ...(account.sequence ?? [])];
+  const draft = steps.find((step) => step.id === params.get("draft")) ?? account.draft;
+  return <Review key={draft.id} account={account} draft={draft} steps={steps} others={withDrafts.filter((a) => a.id !== account.id)} />;
 }
 
-function Review({ account, draft, others }: { account: Account; draft: Draft; others: Account[] }) {
-  const { workspace, saveDraft, review, send, pending } = useWorkspace();
+function Review({ account, draft, steps, others }: { account: Account; draft: Draft; steps: Draft[]; others: Account[] }) {
+  const { workspace, mode, saveDraft, review, send, writeSequence, schedule, prepareLinkedIn, pending } = useWorkspace();
   const [subject, setSubject] = useState(draft.subject);
   const [body, setBody] = useState(draft.body);
   const [error, setError] = useState<ApiError | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [scheduledTime, setScheduledTime] = useState("");
 
   // A new revision from the server replaces local text; the Ask history stays.
   const [seenRevision, setSeenRevision] = useState(draft.revision);
@@ -79,14 +86,19 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
   }
 
   const dirty = subject !== draft.subject || body !== draft.body;
-  const editable = draft.dispatch_status === "not_sent";
+  const editable = draft.dispatch_status === "not_sent" && !draft.prepared_at;
   const sent = draft.dispatch_status === "sent";
   const busy = pending !== null;
+  const linkedin = draft.channel === "linkedin";
+  const step = draft.sequence_step ?? 1;
+  const lead = workspace!.pipeline.leads.find((item) => item.account_id === account.id);
+  const priorComplete = step === 1 || (lead?.stage === "contacted" && steps[step - 2]?.dispatch_status === "sent");
 
   const canSave = editable && dirty && subject.trim().length > 0 && body.trim().length > 0;
   const canApprove = editable && !dirty && draft.review_status !== "approved";
   const canReject = editable && !dirty && draft.review_status !== "rejected";
-  const canSend = editable && !dirty && draft.review_status === "approved" && Boolean(draft.test_recipient);
+  const readyForOutreach = !dirty && draft.review_status === "approved" && Boolean(draft.test_recipient) && priorComplete && !lead?.bounced;
+  const canSend = editable && readyForOutreach && !linkedin;
 
   const cited = account.evidence.filter((e) => draft.evidence_ids.includes(e.id));
   const draftEvents = workspace!.activity.filter((e) => e.draft_id === draft.id || e.account_id === account.id);
@@ -96,7 +108,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
   async function act(fn: () => Promise<{ ok: boolean; error?: ApiError }>) {
     setError(null);
     const res = await fn();
-    if (!res.ok && res.error && res.error.status !== 409 && res.error.status !== 401) setError(res.error);
+    if (!res.ok && res.error && res.error.status !== 401) setError(res.error);
     return res.ok;
   }
 
@@ -114,6 +126,25 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
       return false;
     }
     return act(() => saveDraft(draft.id, draft.revision, draft.subject, draft.body.replace(before, after)));
+  }
+
+  async function saveSchedule() {
+    const time = new Date(scheduledTime);
+    if (!Number.isFinite(time.getTime()) || time.getTime() <= Date.now()) {
+      setError(new ApiError(422, "schedule_in_past", "Choose a time in the future."));
+      return;
+    }
+    await act(() => schedule(draft.id, draft.revision, time.toISOString()));
+  }
+
+  async function copyHandoff() {
+    if (!(await act(() => prepareLinkedIn(draft.id, draft.revision)))) return;
+    try {
+      await navigator.clipboard.writeText(draft.body);
+      toast.success("Approved LinkedIn message copied");
+    } catch {
+      toast.info("The handoff is saved. Select the approved text to copy it.");
+    }
   }
 
   return (
@@ -134,6 +165,24 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
             </div>
             <span className="text-sm text-muted-foreground">{draftStateText(draft)}</span>
           </div>
+
+          {mode === "live" ? (
+            <Panel aria-label="Outreach sequence" className="flex flex-wrap items-center gap-2">
+              {steps.map((item, index) => (
+                <Button key={item.id} variant={item.id === draft.id ? "default" : "outline"} size="sm" asChild>
+                  <Link href={`/outreach/?account=${account.id}&draft=${item.id}`} aria-current={item.id === draft.id ? "page" : undefined}>
+                    {index === 0 ? "Initial email" : item.channel === "linkedin" ? "LinkedIn follow-up" : "Follow-up email"}
+                  </Link>
+                </Button>
+              ))}
+              {steps.length === 1 ? (
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => void act(() => writeSequence(account.id))}>
+                  {pending === "sequence" ? <Spinner data-icon="inline-start" /> : null} Generate follow-ups
+                </Button>
+              ) : null}
+              {draft.message_variant ? <Badge variant="secondary">Variant {draft.message_variant}</Badge> : null}
+            </Panel>
+          ) : null}
 
           {others.length > 0 ? (
             <p className="text-sm text-muted-foreground">
@@ -156,10 +205,9 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
               <span className={cn("text-[13px] font-semibold", enr.tone)}>{enr.text}</span>
             </div>
             <div className="flex flex-col gap-0.5 bg-subtle px-[18px] py-3.5">
-              <span className="text-[13px] text-muted-foreground">This email actually goes to</span>
-              <span className="font-semibold">Controlled test inbox</span>
-              <span className="text-ink-2">{draft.test_recipient ?? "Test inbox setup needed"}</span>
-              <span className="text-[13px] text-muted-foreground">Set on the server. The prospect never receives it.</span>
+              <span className="text-[13px] text-muted-foreground">Test recipient</span>
+              <span className="font-semibold">{linkedin ? "Controlled LinkedIn profile" : "Controlled test inbox"}</span>
+              <span className="break-all text-ink-2">{draft.test_recipient ?? "Test recipient setup needed"}</span>
             </div>
           </div>
 
@@ -182,7 +230,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
 
           <section aria-label="Email draft" className="rounded-lg border bg-card">
             <div className="flex items-baseline gap-4 border-b px-5 py-3.5">
-              <label htmlFor="subject" className="w-14 shrink-0 text-[13px] text-muted-foreground">Subject</label>
+              <label htmlFor="subject" className="w-14 shrink-0 text-[13px] text-muted-foreground">{linkedin ? "Step title" : "Subject"}</label>
               <Input
                 id="subject"
                 value={subject}
@@ -192,13 +240,14 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
               />
             </div>
             <div className="px-5 py-4 md:pl-[92px]">
-              <label htmlFor="body" className="sr-only">Email body</label>
+              <label htmlFor="body" className="sr-only">{linkedin ? "LinkedIn message" : "Email body"}</label>
               <Textarea
                 id="body"
                 value={body}
                 disabled={!editable}
                 onChange={(e) => setBody(e.target.value)}
                 rows={Math.max(10, body.split("\n").length + 2)}
+                maxLength={linkedin ? 450 : 4000}
                 className="max-w-[660px] resize-y border-0 bg-transparent p-0 font-serif text-[17px] leading-[1.65] text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
               />
             </div>
@@ -214,6 +263,25 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
               </span>
             </div>
           </section>
+
+          {step > 1 && draft.review_status === "approved" && !dirty ? (
+            <Panel aria-label="Schedule follow-up" className="flex flex-col gap-3">
+              {draft.scheduled_at ? <p className="text-sm">Scheduled for {dateTime(draft.scheduled_at)} Pacific.</p> : null}
+              {!priorComplete ? <p className="text-sm text-muted-foreground">Complete the previous touch to continue. Replies and closed outcomes pause follow-ups.</p> : null}
+              {editable ? (
+                <FieldGroup className="gap-3">
+                  <Field>
+                    <FieldLabel htmlFor="followup-time">Follow-up time (your local time)</FieldLabel>
+                    <Input id="followup-time" type="datetime-local" value={scheduledTime} onChange={(e) => setScheduledTime(e.target.value)} />
+                  </Field>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" disabled={busy || !scheduledTime} onClick={() => void saveSchedule()}>Save schedule</Button>
+                    {draft.scheduled_at ? <Button variant="ghost" size="sm" disabled={busy} onClick={() => void act(() => schedule(draft.id, draft.revision, null))}>Clear schedule</Button> : null}
+                  </div>
+                </FieldGroup>
+              ) : null}
+            </Panel>
+          ) : null}
 
           <div className="flex flex-wrap items-center justify-end gap-2">
             {dirty ? (
@@ -233,7 +301,16 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
               {pending === "review-approve" ? <Spinner /> : null}
               Approve revision {draft.revision}
             </Button>
-            <Button
+            {linkedin ? (
+              <>
+                <Button variant="outline" disabled={!readyForOutreach || busy} onClick={() => void copyHandoff()}>Copy approved LinkedIn message</Button>
+                {draft.prepared_at && draft.test_recipient ? (
+                  <Button variant="outline" asChild>
+                    <Link href={draft.test_recipient} target="_blank" rel="noreferrer noopener">Open test profile</Link>
+                  </Button>
+                ) : null}
+              </>
+            ) : <Button
               variant={canSend ? "default" : "outline"}
               className={cn("h-10 font-semibold", !canSend && "border-dashed")}
               disabled={!canSend || busy}
@@ -241,7 +318,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
             >
               {pending === "send" ? <Spinner data-icon="inline-start" /> : canSend ? <Send data-icon="inline-start" /> : <Lock data-icon="inline-start" />}
               {pending === "send" ? "Sending…" : sent ? "Sent" : "Send test email"}
-            </Button>
+            </Button>}
           </div>
         </div>
 
@@ -297,6 +374,9 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
 
 function StatusAlert({ draft, dirty, lastEditMessage }: { draft: Draft; dirty: boolean; lastEditMessage?: string }) {
   const r = draft.revision;
+  if (draft.prepared_at) {
+    return <InlineAlert tone="info" title={`LinkedIn handoff prepared for revision ${r}`}>The approved message is ready for the controlled test profile. Delivery happens in LinkedIn.</InlineAlert>;
+  }
   if (draft.dispatch_status === "sent") {
     return <InlineAlert tone="success" title={`Gmail accepted revision ${r}`}>The test send was recorded at {time(draft.updated_at)} and the pipeline was updated once. Check the test inbox for delivery.</InlineAlert>;
   }
@@ -311,9 +391,9 @@ function StatusAlert({ draft, dirty, lastEditMessage }: { draft: Draft; dirty: b
   }
   if (draft.review_status === "approved") {
     if (!draft.test_recipient) {
-      return <InlineAlert tone="warning" title="Test inbox setup needed">Configure the test inbox, then save and approve a new revision.</InlineAlert>;
+      return <InlineAlert tone="warning" title="Test recipient setup needed">Configure the controlled recipient, then save and approve a new revision.</InlineAlert>;
     }
-    return <InlineAlert tone="success" title={`Revision ${r} is approved`}>It's ready to send to the controlled test inbox. Any edit clears this approval.</InlineAlert>;
+    return <InlineAlert tone="success" title={`Revision ${r} is approved`}>{draft.channel === "linkedin" ? "Approved for the controlled LinkedIn profile." : "Approved for the controlled test inbox."} Any edit clears this approval.</InlineAlert>;
   }
   if (draft.review_status === "rejected") {
     return <InlineAlert tone="danger" title={`Revision ${r} was rejected`}>It can't be sent. Edit and save a new revision to continue.</InlineAlert>;
