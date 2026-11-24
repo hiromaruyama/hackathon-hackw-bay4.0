@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Activity, Bot, Building2, Home, KanbanSquare, PenLine, RefreshCw, Share2, Target } from "lucide-react";
+import { Activity, Bot, Building2, Home, KanbanSquare, MessageCircle, PenLine, RefreshCw, Share2, Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,15 +27,18 @@ const NAV = [
   { href: "/pipeline/", label: "Pipeline", icon: KanbanSquare },
 ];
 
+const CHAT = { href: "/chat/", label: "Chat", icon: MessageCircle };
+
 export function AppShell({ commands, children }: { commands?: React.ReactNode; children: React.ReactNode }) {
   const { status, mode, loadError, refresh, workspace } = useWorkspace();
   const pathname = usePathname();
+  const chat = pathname === CHAT.href;
   const isHome = pathname === "/";
   const showWorkspace = status === "ready" && workspace !== null;
-  const homeChat = isHome && showWorkspace;
+  const fullPageChat = (isHome || chat) && showWorkspace;
 
   return (
-    <div className={cn("flex min-h-screen flex-col", homeChat && "h-dvh min-h-dvh overflow-hidden")}>
+    <div className={cn("flex min-h-screen flex-col", fullPageChat && "h-dvh min-h-dvh overflow-hidden")}>
       <header className="flex h-12 shrink-0 items-center gap-4 border-b bg-topbar px-4 text-foreground">
         <Link href="/" className="flex items-center gap-2.5 text-[19px] font-bold whitespace-nowrap text-foreground no-underline hover:text-foreground">
           <Bot aria-hidden size={23} className="text-primary">
@@ -53,33 +56,22 @@ export function AppShell({ commands, children }: { commands?: React.ReactNode; c
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <nav aria-label="Main" className="flex shrink-0 overflow-x-auto border-b bg-subtle md:w-[76px] md:flex-col md:border-r md:border-b-0 md:py-2">
-          {NAV.map(({ href, label, icon: Icon }) => {
-            const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex min-w-[72px] flex-col items-center gap-1 px-1 py-2.5 text-xs text-muted-foreground no-underline hover:bg-muted hover:text-foreground",
-                  active && "bg-accent font-bold text-foreground",
-                )}
-              >
-                <Icon aria-hidden className="size-5" strokeWidth={1.8} />
-                {label}
-              </Link>
-            );
-          })}
+        <nav aria-label="Main" className="flex shrink-0 border-b bg-subtle md:w-[76px] md:flex-col md:border-r md:border-b-0 md:py-2">
+          <div className="flex min-w-0 flex-1 overflow-x-auto md:flex-none md:flex-col md:overflow-visible">
+            {NAV.map((item) => (
+              <NavLink key={item.href} item={item} active={item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)} />
+            ))}
+          </div>
+          <NavLink item={CHAT} active={chat} className="border-l md:sticky md:bottom-0 md:mt-auto md:border-t md:border-l-0" />
         </nav>
 
-        <div className={cn("flex min-w-0 flex-1 flex-col", homeChat && "min-h-0")}>
+        <div className={cn("flex min-w-0 flex-1 flex-col", fullPageChat && "min-h-0")}>
           {commands ? (
             <div role="toolbar" aria-label="Commands" className="flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b bg-card px-4">
               {commands}
             </div>
           ) : null}
-          <main className={cn("mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6", homeChat && "min-h-0 max-w-none flex-1 gap-0 p-0 md:p-0")}>
+          <main className={cn("mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6", fullPageChat && "min-h-0 flex-1", isHome && showWorkspace && "max-w-none gap-0 p-0 md:p-0")}>
             {status === "ready" && loadError ? (
               <InlineAlert tone="danger" title="Couldn't refresh the workspace" action={<Button variant="outline" size="sm" onClick={() => void refresh()}>Retry</Button>}>
                 {loadError.message} You're seeing the last saved view.
@@ -94,10 +86,27 @@ export function AppShell({ commands, children }: { commands?: React.ReactNode; c
             ) : null}
             {showWorkspace ? children : null}
           </main>
-          {showWorkspace && !isHome ? <VoiceAssistant /> : null}
+          {showWorkspace && !fullPageChat ? <VoiceAssistant /> : null}
         </div>
       </div>
     </div>
+  );
+}
+
+function NavLink({ item: { href, label, icon: Icon }, active, className }: { item: typeof CHAT; active: boolean; className?: string }) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "flex min-w-[72px] shrink-0 flex-col items-center gap-1 px-1 py-2.5 text-xs text-muted-foreground no-underline hover:bg-muted hover:text-foreground",
+        active && "bg-accent font-bold text-foreground",
+        className,
+      )}
+    >
+      <Icon aria-hidden className="size-5" strokeWidth={1.8} />
+      {label}
+    </Link>
   );
 }
 
