@@ -1,5 +1,5 @@
 import { AppShell } from "@/components/app-shell";
-import { SignalAssistantChat } from "@/components/voice-assistant";
+import { AgentChat } from "@/components/voice-assistant";
 
 export default function HomePage() {
   return (
@@ -11,7 +11,7 @@ export default function HomePage() {
             <p className="mt-1 text-sm text-muted-foreground">Ask about accounts, evidence, and pipeline activity.</p>
           </div>
         </header>
-        <SignalAssistantChat />
+        <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-4 pb-4"><AgentChat fullPage /></div>
       </section>
     </AppShell>
   );
