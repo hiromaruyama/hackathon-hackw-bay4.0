@@ -1,6 +1,9 @@
+from collections import deque
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from threading import Lock
+from time import monotonic
 from secrets import compare_digest, token_urlsafe
 from typing import Annotated
 
@@ -42,6 +45,24 @@ def require_actor(request: Request) -> str:
 Actor = Annotated[str, Depends(require_actor)]
 
 
+class ChatRateLimit:
+    """Caps assistant sessions per process so a leaked demo login can't drain ElevenLabs credits."""
+
+    def __init__(self, limit: int = 20, window_seconds: float = 600):
+        self.limit, self.window = limit, window_seconds
+        self.issued: deque[float] = deque()
+        self.lock = Lock()
+
+    def take(self) -> None:
+        now = monotonic()
+        with self.lock:
+            while self.issued and now - self.issued[0] > self.window:
+                self.issued.popleft()
+            if len(self.issued) >= self.limit:
+                raise SignalError('chat_rate_limited', 'The assistant is busy. Try again in a few minutes.', 429)
+            self.issued.append(now)
+
+
 def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = None, providers: Providers | None = None) -> FastAPI:
     settings = settings or Settings.load()
     if settings.session_secret and len(settings.session_secret) < 32:
@@ -51,6 +72,7 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     store = store or Neo4jStore(settings)
     providers = providers or Providers(settings)
     workflow = Workflow(settings, store, providers)
+    chat_limit = ChatRateLimit()
 
     async def refresh_public_signals(stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -143,6 +165,7 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
             'gmail_feedback_configured': settings.gmail_feedback_configured,
             'flexprice_enabled': settings.flexprice_enabled, 'flexprice_configured': settings.flexprice_configured,
             'nexla_configured': bool(settings.nexla_sync_url and settings.nexla_access_token),
+            'chat_configured': settings.chat_configured,
         }
 
     @app.get('/api/workspace')
@@ -189,6 +212,13 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     def send_draft(draft_id: str, body: RevisionInput, actor: Actor) -> Workspace:
         return workflow.send_draft(draft_id, body.revision, actor)
 
+    @app.post('/api/chat/session')
+    def chat_session(actor: Actor):
+        # The assistant is read-only: its only tool runs in the browser on data the UI already shows.
+        if not settings.chat_configured:
+            raise SignalError('chat_unconfigured', 'Configure ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID.', 503)
+        chat_limit.take()
+        return {'signed_url': providers.chat_signed_url()}
     @app.post('/api/drafts/{draft_id}/schedule')
     def schedule_draft(draft_id: str, body: ScheduleDraft, actor: Actor) -> Workspace:
         return workflow.schedule_draft(draft_id, body, actor)

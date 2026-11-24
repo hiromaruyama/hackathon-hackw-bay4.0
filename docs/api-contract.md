@@ -24,6 +24,7 @@ All workspace and readiness routes require a demo session. Sign in with `POST /a
 | `PATCH /api/drafts/{id}` | `{"expected_revision":1,"subject":"…","body":"…"}` | Workspace with the next pending revision |
 | `POST /api/drafts/{id}/review` | `{"revision":2,"decision":"approve"}` | Workspace with the review decision. `decision` is `approve` or `reject`. |
 | `POST /api/drafts/{id}/send` | `{"revision":2}` | Workspace with the stored attempt result and any confirmed Test send event |
+| `POST /api/chat/session` | `{}` | `{"signed_url":"wss://…"}`, a short-lived ElevenLabs URL for the private Signal Assistant agent. `503 chat_unconfigured` without `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID`, `429 chat_rate_limited` after 20 sessions in 10 minutes, `502 elevenlabs_unavailable` on provider failure. Don't log or cache the URL. |
 | `POST /api/drafts/{id}/schedule` | `{"revision":2,"scheduled_at":"2026-12-01T20:00:00Z"}` or `null` to clear | Workspace with an earliest action time on an approved follow-up. |
 | `POST /api/drafts/{id}/linkedin-handoff` | `{"revision":1}` | Workspace with a recorded handoff to the controlled LinkedIn profile after approval and prior touches. |
 | `POST /api/feedback/gmail/sync` | — | Workspace with deduplicated reply and bounce events matched to the controlled test message. |

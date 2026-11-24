@@ -51,6 +51,8 @@ class Settings:
     flexprice_meter_graph_and_outreach: bool = False
     nexla_sync_url: str = ''
     nexla_access_token: str = field(default='', repr=False)
+    elevenlabs_api_key: str = field(default='', repr=False)
+    elevenlabs_agent_id: str = ''
 
     @classmethod
     def load(cls) -> 'Settings':
@@ -117,11 +119,16 @@ class Settings:
             flexprice_wallet_id=get('FLEXPRICE_WALLET_ID'), flexprice_enrichment_cost=cost,
             flexprice_meter_graph_and_outreach=get('FLEXPRICE_METER_GRAPH_AND_OUTREACH', 'false').lower() == 'true',
             nexla_sync_url=get('NEXLA_SYNC_URL'), nexla_access_token=get('NEXLA_ACCESS_TOKEN'),
+            elevenlabs_api_key=get('ELEVENLABS_API_KEY'), elevenlabs_agent_id=get('ELEVENLABS_AGENT_ID'),
         )
 
     @property
     def gmail_configured(self) -> bool:
         return all((self.gmail_client_id, self.gmail_client_secret, self.gmail_refresh_token, self.gmail_sender, self.test_recipient))
+
+    @property
+    def chat_configured(self) -> bool:
+        return bool(self.elevenlabs_api_key and self.elevenlabs_agent_id)
 
     @property
     def gmail_feedback_configured(self) -> bool:

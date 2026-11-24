@@ -150,6 +150,18 @@ class Providers:
         except (httpx.RequestError, ValueError):
             raise ProviderError(provider) from None
 
+    def chat_signed_url(self) -> str:
+        """Short-lived WebSocket URL for the private Signal Assistant agent. It is a credential: never log it."""
+        data = self._json(
+            'ElevenLabs', 'GET', 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url',
+            params={'agent_id': self.settings.elevenlabs_agent_id},
+            headers={'xi-api-key': self.settings.elevenlabs_api_key},
+        )
+        url = data.get('signed_url') if isinstance(data, dict) else None
+        if not isinstance(url, str) or not url.startswith('wss://'):
+            raise ProviderError('ElevenLabs')
+        return url
+
     def complete(self, schema: type[Result], instructions: str, context: str, *, max_tokens: int = 1800) -> Result:
         if not self.claude:
             raise ProviderError('Claude', 'API credentials are missing.', 503)
