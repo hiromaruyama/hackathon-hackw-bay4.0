@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search, SearchPlus } from "lucide-react";
 import { AccountsTable } from "@/components/accounts-table";
 import { AppShell } from "@/components/app-shell";
 import { EvidenceList, InlineAlert, Panel, PanelHeader } from "@/components/signal";
@@ -24,18 +24,19 @@ export default function AccountsPage() {
 }
 
 function Accounts() {
-  const { workspace, discover, pending } = useWorkspace();
+  const { workspace, discover, discoverMore, pending } = useWorkspace();
   const w = workspace!;
-  const [error, setError] = useState<ApiError | null>(null);
+  const [error, setError] = useState<{ detail: ApiError; action: "find" | "refresh" | "more" } | null>(null);
   const searching = pending === "discover";
+  const expanding = pending === "discover-more";
   const approved = w.approved_icp_revision;
   const competitors = w.competitors ?? (w.competitor ? [w.competitor] : []);
   const [deeper, setDeeper] = useState(false);
 
-  async function run(refresh: boolean) {
+  async function run(action: "find" | "refresh" | "more") {
     setError(null);
-    const res = await discover(refresh, deeper);
-    if (!res.ok) setError(res.error ?? null);
+    const res = action === "more" ? await discoverMore() : await discover(action === "refresh", deeper);
+    if (!res.ok && res.error) setError({ detail: res.error, action });
   }
 
   return (
@@ -48,13 +49,21 @@ function Accounts() {
           </p>
         </div>
         {approved ? (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {w.accounts.length > 0 ? (
-              <Button variant="outline" className="h-10 font-semibold" disabled={searching} onClick={() => run(true)}>
-                <RefreshCw /> Search again
-              </Button>
+              <>
+                <Button variant="outline" className="h-10 font-semibold" disabled={Boolean(pending)} onClick={() => run("refresh")}>
+                  {searching ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />} Refresh research
+                </Button>
+                {w.more_accounts_available ? (
+                  <Button className="h-10 font-semibold" disabled={Boolean(pending)} onClick={() => run("more")}>
+                    {expanding ? <Spinner data-icon="inline-start" /> : <SearchPlus data-icon="inline-start" />}
+                    {expanding ? "Finding more…" : "Find more accounts"}
+                  </Button>
+                ) : null}
+              </>
             ) : (
-              <Button className="h-10 font-semibold" disabled={searching} onClick={() => run(false)}>
+              <Button className="h-10 font-semibold" disabled={searching} onClick={() => run("find")}>
                 {searching ? <Spinner /> : <Search />}
                 {searching ? "Finding accounts…" : "Find accounts"}
               </Button>
@@ -65,25 +74,26 @@ function Accounts() {
 
       {approved ? (
         <label className="flex items-center gap-2 self-start text-sm">
-          <input type="checkbox" checked={deeper} disabled={searching} onChange={(event) => setDeeper(event.target.checked)} />
+          <input type="checkbox" checked={deeper} disabled={searching || expanding} onChange={(event) => setDeeper(event.target.checked)} />
           Include targeted filings and job searches
         </label>
       ) : null}
       {w.research_schedule?.interval_minutes && w.research_schedule.next_due_at ? (
         <p className="text-sm text-muted-foreground">Next scheduled research refresh {dateTime(w.research_schedule.next_due_at)} Pacific.</p>
       ) : null}
+      {expanding ? <p role="status" className="text-sm text-muted-foreground">Searching public sources for new companies.</p> : null}
 
       {error ? (
         <InlineAlert
           tone="danger"
           title="The search didn't finish"
           action={
-            <Button variant="outline" size="sm" onClick={() => run(false)} className="border-destructive text-destructive">
+            <Button variant="outline" size="sm" onClick={() => run(error.action)} className="border-destructive text-destructive">
               Retry search
             </Button>
           }
         >
-          {error.message}
+          {error.detail.message}
           {w.accounts.length ? ` Your ${w.accounts.length} saved accounts are unchanged.` : ""}
         </InlineAlert>
       ) : null}
@@ -112,8 +122,8 @@ function Accounts() {
       ) : w.accounts.length === 0 ? (
         <Panel className="flex flex-col items-start gap-2 py-10">
           <span className="text-lg font-bold">No accounts yet</span>
-          <span className="max-w-[56ch] text-ink-2">Find up to three companies that match profile revision {approved}, each with the sources behind its score.</span>
-          <Button className="mt-2 h-10 font-semibold" onClick={() => run(false)}>
+          <span className="max-w-[56ch] text-ink-2">Find up to six companies that match profile revision {approved}, each with the sources behind its score.</span>
+          <Button className="mt-2 h-10 font-semibold" onClick={() => run("find")}>
             <Search /> Find accounts
           </Button>
         </Panel>

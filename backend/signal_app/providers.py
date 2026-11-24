@@ -208,7 +208,8 @@ class Providers:
         except (anthropic.APIError, ValueError):
             raise ProviderError('Claude') from None
 
-    def search(self, query: str, *, limit: int = 8, include_details: bool = False, source_domains: tuple[str, ...] = ()) -> list[Source]:
+    def search(self, query: str, *, limit: int = 8, include_details: bool = False,
+               source_domains: tuple[str, ...] = (), exclude_domains: tuple[str, ...] = ()) -> list[Source]:
         if not self.settings.tavily_api_key:
             raise ProviderError('Tavily', 'API credentials are missing.', 503)
         options = {'query': query[:390], 'search_depth': 'basic', 'max_results': limit,
@@ -218,6 +219,8 @@ class Providers:
             if None in domains or len(domains) > 10:
                 raise ProviderError('Tavily', 'needs at most ten valid public hostnames for source filtering.', 503)
             options['include_domains'] = list(dict.fromkeys(domains))
+        if exclude_domains:
+            options['exclude_domains'] = list(exclude_domains)
         payload = self._json(
             'Tavily', 'POST', 'https://api.tavily.com/search',
             headers={'Authorization': f'Bearer {self.settings.tavily_api_key}'},

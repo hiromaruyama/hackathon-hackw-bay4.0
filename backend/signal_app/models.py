@@ -24,6 +24,8 @@ SynthesisMode = Literal['claude', 'grounded_template']
 OutreachChannel = Literal['email', 'linkedin']
 MessageVariant = Literal['A', 'B']
 UsageOperation = Literal['leads_enriched', 'graph_query_evaluated', 'outreach_sent']
+INITIAL_DISCOVERY_LIMIT = 6
+MAX_DISCOVERY_ACCOUNTS = 10
 
 
 class InputModel(BaseModel):
@@ -124,6 +126,7 @@ class ResearchBatch(BaseModel):
     nexla_status: str | None = None
     focused_search_used: bool = False
     deeper_sources: bool = False
+    additional_prospects: list[Source] = Field(default_factory=list)
 
 
 class Expansion(BaseModel):
@@ -156,6 +159,10 @@ class RevisionInput(InputModel):
 class DiscoverInput(RevisionInput):
     refresh: bool = False
     deeper_sources: bool = False
+
+
+class MoreDiscoveryInput(RevisionInput):
+    source_domains: list[ShortText] = Field(default_factory=list, max_length=10)
 
 
 class EditDraft(InputModel):
@@ -393,6 +400,7 @@ class Workspace(BaseModel):
     pipeline: Pipeline
     usage: Usage | None
     research_schedule: ResearchSchedule | None = None
+    more_accounts_available: bool = False
 
 
 class DraftRevision(BaseModel):

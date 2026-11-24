@@ -94,7 +94,7 @@ export function nextAction(w: Workspace): NextAction {
     return { title: "Approve your customer profile", detail: `Revision ${w.icp.revision} is a draft. Accounts are found only from an approved profile.`, href: "/profile/", cta: "Review profile" };
   }
   if (w.accounts.length === 0) {
-    return { title: "Find accounts that match your profile", detail: `Searches public sources using profile revision ${w.approved_icp_revision}. Up to three accounts, each with cited sources.`, href: "/accounts/", cta: "Find accounts" };
+    return { title: "Find accounts that match your profile", detail: `Searches public sources using profile revision ${w.approved_icp_revision}. Up to six accounts, each with cited sources.`, href: "/accounts/", cta: "Find accounts" };
   }
   const withDraft = w.accounts.filter((a) => a.draft);
   const pick = (pred: (a: Account) => boolean) => withDraft.find(pred);
