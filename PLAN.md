@@ -92,9 +92,9 @@ Update this checklist alongside each merged milestone. The frontend and integrat
 | Milestone | Owner | Status | Verification or next action |
 | --- | --- | --- | --- |
 | Contract and shared fixture | Backend | Planned | Publish the example response and routes. |
-| Strategy, discovery, and deployment shell | Both | Planned | Show one approved ICP and one persisted cited account. |
-| Graph, enrichment, and grounded draft | Both | Planned | Verify one real graph path and the Hunter result. |
-| Review, dispatch, and pipeline | Both | Planned | Run approval and duplicate-send checks, then verify inbox receipt and refresh. |
+| Strategy, discovery, and deployment shell | Both | In progress | Frontend on `main` (`frontend/`): profile approval and discovery screens pass lint and static build, verified in the browser with labeled sample data only. Next: connect to the backend API and deploy to Render. |
+| Graph, enrichment, and grounded draft | Both | In progress | Graph explorer, account detail, and Hunter status UI render from `graph_path`, `contact`, and `enrichment_status` with sample data. Next: verify one real Neo4j path and Hunter result live. |
+| Review, dispatch, and pipeline | Both | In progress | Review UI enforces exact-revision approve, edit-clears-approval, and one send per approved revision in sample mode; Mesa Ridge moved to Contacted once after refresh. Next: run the same checks against the live backend and verify inbox receipt. |
 | Flexprice | Backend | Planned | Verify access, event, and pre-Hunter credit block. |
 | Band Desktop and Snyk | Frontend | Planned | Verify access, handoff proof, and CI scan results. |
 | Nexla | Backend | Conditional | Confirm whether the organizer requires it and provides access. |
