@@ -1,5 +1,5 @@
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import Lock
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -396,12 +396,14 @@ class Workflow:
                          self.settings.gmail_pubsub_service_account or '', self.settings.gmail_sender or '',
                          self.settings.test_recipient or '')
 
-    def gmail_watch_active(self) -> bool:
+    def gmail_watch_status(self) -> tuple[bool, datetime | None]:
         if not self.settings.gmail_push_configured:
-            return False
+            return False, None
         binding = self._gmail_watch_binding()
         watch = self.store.read(lambda _, state: state.gmail_watch)
-        return bool(watch and watch.binding == binding and watch.expires_at > utcnow())
+        if not watch or watch.binding != binding:
+            return False, None
+        return watch.expires_at > utcnow(), watch.last_push_at
 
     def reconcile_gmail_watch(self) -> None:
         binding = self._gmail_watch_binding()
@@ -417,9 +419,13 @@ class Workflow:
                     current = state.gmail_watch
                     if current and current.binding == binding and current.renewed_at >= now:
                         return
-                    checkpoint = current.history_id if current and current.binding == binding else history_id
                     self._save_gmail_feedback(graph, state, sends, feedback)
-                    state.gmail_watch = GmailWatch(binding=binding, history_id=checkpoint, expires_at=expires_at, renewed_at=now)
+                    if current and current.binding == binding:
+                        current.expires_at = expires_at
+                        current.renewed_at = now
+                    else:
+                        state.gmail_watch = GmailWatch(binding=binding, history_id=history_id,
+                                                       expires_at=expires_at, renewed_at=now)
 
                 self.store.write(renew)
                 if initial:
@@ -434,7 +440,15 @@ class Workflow:
         watch = self.store.read(lambda _, state: state.gmail_watch)
         if not watch or watch.binding != binding:
             raise SignalError('gmail_watch_starting', 'The controlled Gmail watch is starting. Retry shortly.', 503)
+        pushed_at = utcnow() if notification_id else None
         if notification_id and notification_id <= watch.history_id:
+            if not watch.last_push_at:
+                # The initial watch notification can carry the cursor we just saved.
+                def acknowledge(_, state: State) -> None:
+                    current = state.gmail_watch
+                    if current and current.binding == binding and not current.last_push_at:
+                        current.last_push_at = pushed_at
+                self.store.write(acknowledge)
             return
 
         history_id, changed = self.providers.gmail_history_checkpoint(watch.history_id)
@@ -451,6 +465,8 @@ class Workflow:
             if current.history_id < history_id:
                 self._save_gmail_feedback(graph, state, sends, feedback)
                 current.history_id = history_id
+            if pushed_at and (not current.last_push_at or pushed_at > current.last_push_at):
+                current.last_push_at = pushed_at
 
         self.store.write(save)
 

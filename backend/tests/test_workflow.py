@@ -341,7 +341,10 @@ def test_gmail_watch_reconciles_and_deduplicates_feedback(system):
     providers.gmail_history_checkpoint = history
 
     workflow.reconcile_gmail_watch()
-    assert workflow.gmail_watch_active()
+    assert workflow.gmail_watch_status() == (True, None)
+    workflow.process_gmail_notification(100)
+    active, first_push_at = workflow.gmail_watch_status()
+    assert active and first_push_at
     assert history_calls == []
     providers.feedback['gmail-test-1'] = [GmailFeedback('reply-1', 'reply'), GmailFeedback('bounce-1', 'bounce')]
     workflow.process_gmail_notification(105)
@@ -361,6 +364,7 @@ def test_gmail_watch_reconciles_and_deduplicates_feedback(system):
     assert len(watch_calls) == 2
     assert history_calls == [100, 105]
     assert providers.store.read(lambda _, state: state.gmail_watch.history_id) == 106
+    assert workflow.gmail_watch_status()[1] >= first_push_at
     assert workflow.workspace().pipeline.events == pipeline.events
     assert len(providers.sent) == 1
 

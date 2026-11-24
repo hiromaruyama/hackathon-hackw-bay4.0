@@ -179,12 +179,14 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
 
     @app.get('/api/readiness')
     def readiness(actor: Actor):
+        gmail_watch_active, gmail_last_push_at = workflow.gmail_watch_status()
         return {
             'claude_configured': bool(settings.anthropic_api_key), 'tavily_configured': bool(settings.tavily_api_key),
             'hunter_configured': bool(settings.hunter_api_key), 'neo4j_configured': bool(settings.neo4j_uri),
             'neo4j_reachable': store.check(), 'gmail_configured': settings.gmail_configured,
             'gmail_feedback_configured': settings.gmail_feedback_configured,
-            'gmail_push_configured': settings.gmail_push_configured, 'gmail_watch_active': workflow.gmail_watch_active(),
+            'gmail_push_configured': settings.gmail_push_configured, 'gmail_watch_active': gmail_watch_active,
+            'gmail_last_push_at': gmail_last_push_at,
             'flexprice_enabled': settings.flexprice_enabled, 'flexprice_configured': settings.flexprice_configured,
             'nexla_configured': bool(settings.nexla_sync_url and settings.nexla_access_token),
             'chat_configured': settings.chat_configured,

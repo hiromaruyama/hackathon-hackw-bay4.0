@@ -466,6 +466,7 @@ class GmailWatch(BaseModel):
     history_id: int
     expires_at: AwareDatetime
     renewed_at: AwareDatetime
+    last_push_at: AwareDatetime | None = None
 
 
 class State(BaseModel):
