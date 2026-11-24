@@ -329,5 +329,5 @@ class Providers:
             json={'event_name': event.operation, 'event_id': event.id,
                   'external_customer_id': self.settings.flexprice_external_customer_id,
                   'timestamp': event.at.isoformat(), 'source': 'signal',
-                  'properties': {'account_id': event.account_id, 'quantity': event.units}},
+                  'properties': {'account_id': event.account_id, 'quantity': str(event.units)}},
         )

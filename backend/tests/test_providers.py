@@ -79,6 +79,7 @@ def test_flexprice_queries_wallet_and_emits_idempotent_event():
         assert payload['event_id'] == event.id
         assert payload['event_name'] == 'leads_enriched'
         assert payload['external_customer_id'] == 'demo-user'
+        assert payload['properties'] == {'account_id': 'acct-1', 'quantity': '1'}
         return httpx.Response(202, json={'event_id': event.id})
 
     settings = Settings(flexprice_api_key='sandbox-key', flexprice_customer_id='cust-1',
