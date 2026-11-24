@@ -141,7 +141,7 @@ function AssistantPanel({ fullPage }: { fullPage: boolean }) {
 
       <div className={cn(
         "flex shrink-0 flex-col gap-2 bg-background pt-3",
-        fullPage ? "pb-[env(safe-area-inset-bottom)]" : "border-t px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5",
+        fullPage ? "pb-[env(safe-area-inset-bottom)]" : "px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5",
       )}>
         <ChatComposer
           value={text}
