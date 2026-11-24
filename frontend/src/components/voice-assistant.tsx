@@ -24,19 +24,15 @@ const STARTER_PROMPTS = [
   "Where does my pipeline stand?",
 ];
 
-export function VoiceAssistant({ onChatPage }: { onChatPage: boolean }) {
+export function VoiceAssistant() {
   const [open, setOpen] = useState(false);
-  const launcher = (
-    <Button type="button" aria-label="Ask Signal"
-      className="fixed bottom-[max(.75rem,env(safe-area-inset-bottom))] left-3 z-40 h-11 gap-2 rounded-full shadow-sm md:left-1.5 md:h-14 md:w-16 md:flex-col md:gap-1 md:rounded-lg md:px-0 md:text-xs"
-      onClick={onChatPage ? () => document.getElementById("signal-chat-message")?.focus() : undefined}>
-      <MessageCircle aria-hidden /> Ask Signal
-    </Button>
-  );
-  if (onChatPage) return launcher;
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>{launcher}</SheetTrigger>
+      <SheetTrigger asChild>
+        <Button type="button" className="fixed right-[max(1rem,env(safe-area-inset-right))] bottom-[max(1rem,env(safe-area-inset-bottom))] z-40 h-11 gap-2 rounded-full px-4 shadow-lg">
+          <MessageCircle data-icon="inline-start" aria-hidden /> Ask Signal
+        </Button>
+      </SheetTrigger>
       <SheetContent side="right" className="flex h-dvh w-full flex-col gap-0 p-0 sm:max-w-lg">
         <SheetHeader className="shrink-0 border-b px-5 py-4 pr-12">
           <SheetTitle>Signal Assistant</SheetTitle>

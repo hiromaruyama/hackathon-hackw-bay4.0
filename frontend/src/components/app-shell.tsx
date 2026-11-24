@@ -29,13 +29,14 @@ const NAV = [
 
 const AGENT = { href: "/chat/", label: "Agent", icon: MessageCircle };
 
-export function AppShell({ commands, children, fullWidth = false }: { fullWidth?: boolean; commands?: React.ReactNode; children: React.ReactNode }) {
+export function AppShell({ commands, children, fullWidth = false, hasEmbeddedAgent = false }: { fullWidth?: boolean; hasEmbeddedAgent?: boolean; commands?: React.ReactNode; children: React.ReactNode }) {
   const { status, mode, loadError, refresh, workspace } = useWorkspace();
   const pathname = usePathname();
   const chat = pathname === AGENT.href;
   const isHome = pathname === "/";
   const showWorkspace = status === "ready" && workspace !== null;
   const fullPageChat = (isHome || chat) && showWorkspace;
+  const showLauncher = showWorkspace && !fullPageChat && !hasEmbeddedAgent;
 
   return (
     <div className={cn("flex min-h-screen flex-col", fullPageChat && "h-dvh min-h-dvh overflow-hidden")}>
@@ -56,7 +57,7 @@ export function AppShell({ commands, children, fullWidth = false }: { fullWidth?
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <nav aria-label="Main" className="flex shrink-0 border-b bg-subtle md:w-[76px] md:flex-col md:border-r md:border-b-0 md:pt-2 md:pb-20">
+        <nav aria-label="Main" className="flex shrink-0 border-b bg-subtle md:w-[76px] md:flex-col md:border-r md:border-b-0 md:py-2">
           <div className="flex min-w-0 flex-1 overflow-x-auto md:flex-none md:flex-col md:overflow-visible">
             {NAV.map((item) => (
               <NavLink key={item.href} item={item} active={item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)} />
@@ -71,7 +72,7 @@ export function AppShell({ commands, children, fullWidth = false }: { fullWidth?
               {commands}
             </div>
           ) : null}
-          <main className={cn("mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6", fullWidth && "max-w-none", showWorkspace && !isHome && "max-md:pb-20", fullPageChat && "min-h-0 flex-1", isHome && showWorkspace && "max-w-none gap-0 p-0 md:p-0")}>
+          <main className={cn("mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6", fullWidth && "max-w-none", showLauncher && "max-md:pb-20", fullPageChat && "min-h-0 flex-1", isHome && showWorkspace && "max-w-none gap-0 p-0 md:p-0")}>
             {status === "ready" && loadError ? (
               <InlineAlert tone="danger" title="Couldn't refresh the workspace" action={<Button variant="outline" size="sm" onClick={() => void refresh()}>Retry</Button>}>
                 {loadError.message} You're seeing the last saved view.
@@ -86,7 +87,7 @@ export function AppShell({ commands, children, fullWidth = false }: { fullWidth?
             ) : null}
             {showWorkspace ? children : null}
           </main>
-          {showWorkspace && !isHome ? <VoiceAssistant onChatPage={chat} /> : null}
+          {showLauncher ? <VoiceAssistant /> : null}
         </div>
       </div>
     </div>
