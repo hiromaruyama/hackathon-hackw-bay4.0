@@ -16,6 +16,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
+from .assistant import AssistantMessage, AssistantReply, answer_workspace
 from .config import GMAIL_PUSH_PATH, Settings
 from .errors import SignalError
 from .gmail_push import GmailPushAuthenticator, gmail_notification
@@ -48,7 +49,7 @@ Actor = Annotated[str, Depends(require_actor)]
 
 
 class ChatRateLimit:
-    """Caps assistant sessions per process so a leaked demo login can't drain ElevenLabs credits."""
+    """Caps paid assistant requests per process."""
 
     def __init__(self, limit: int = 20, window_seconds: float = 600):
         self.limit, self.window = limit, window_seconds
@@ -75,6 +76,7 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     providers = providers or Providers(settings)
     workflow = Workflow(settings, store, providers)
     chat_limit = ChatRateLimit()
+    assistant_message_limit = ChatRateLimit(limit=20, window_seconds=60)
     gmail_push = GmailPushAuthenticator(settings, providers.http) if settings.gmail_push_configured else None
 
     async def refresh_public_signals(stop: asyncio.Event) -> None:
@@ -243,6 +245,11 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     @app.post('/api/drafts/{draft_id}/send')
     def send_draft(draft_id: str, body: RevisionInput, actor: Actor) -> Workspace:
         return workflow.send_draft(draft_id, body.revision, actor)
+
+    @app.post('/api/chat/message')
+    def assistant_message(body: AssistantMessage, actor: Actor) -> AssistantReply:
+        assistant_message_limit.take()
+        return answer_workspace(providers, workflow.workspace(), body)
 
     @app.post('/api/chat/session')
     def chat_session(actor: Actor):

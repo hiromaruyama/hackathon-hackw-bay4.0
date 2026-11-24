@@ -8,20 +8,18 @@ import {
   useConversationMode,
   useConversationStatus,
 } from "@elevenlabs/react";
-import { Keyboard, MessageCircle, Mic, PhoneOff, Send } from "lucide-react";
+import { MessageCircle, Mic, PhoneOff, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { InlineAlert } from "@/components/signal";
 import { api, ApiError } from "@/lib/api";
-import type { Workspace } from "@/lib/types";
+import type { IntakeMessage, Workspace } from "@/lib/types";
 import { useWorkspace } from "@/lib/workspace-context";
 
-// Signal Assistant: an ElevenLabs agent the founder can talk or type to.
-// It is read-only by design. Its one tool returns what this page already shows (contacts masked),
-// and it has no way to edit, approve, or send. The agent is private, so every session needs a
-// short-lived signed URL from the authenticated backend route POST /api/chat/session.
+// Signal Assistant reads workspace data. Voice sessions use a private ElevenLabs agent
+// and a short-lived signed URL from the authenticated backend.
 
 type Line = { id: number; role: "user" | "agent"; text: string };
 
@@ -40,7 +38,7 @@ export function VoiceAssistant() {
         <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
           <SheetHeader className="border-b px-5 py-4">
             <SheetTitle>Signal Assistant</SheetTitle>
-            <SheetDescription>Talk or type. It answers from your workspace and can't edit, approve, or send.</SheetDescription>
+            <SheetDescription>Ask a question about your workspace. You can type or use the microphone.</SheetDescription>
           </SheetHeader>
           {/* Mounted only while open, so closing the sheet ends the session and releases the mic. */}
           {open ? (
@@ -61,59 +59,95 @@ function AssistantPanel() {
   const { isSpeaking } = useConversationMode();
   const [lines, setLines] = useState<Line[]>([]);
   const [text, setText] = useState("");
-  const [voice, setVoice] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [startingVoice, setStartingVoice] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<{ title: string; message: string } | null>(null);
   const nextId = useRef(1);
   const endRef = useRef<HTMLDivElement>(null);
+  const voiceStart = useRef<symbol | null>(null);
 
   // The handler reads the latest workspace on every call.
   useConversationClientTool("get_workspace_summary", () => JSON.stringify(summarize(workspace)));
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
-  }, [lines]);
+  }, [lines, error]);
 
-  useEffect(() => () => endSession(), [endSession]);
+  useEffect(() => () => {
+    voiceStart.current = null;
+    endSession();
+  }, [endSession]);
 
   const connected = status === "connected";
-  const busy = starting || status === "connecting";
+  const connectingVoice = startingVoice || status === "connecting";
 
-  async function start(withVoice: boolean) {
+  function appendLines(...messages: Omit<Line, "id">[]) {
+    const added = messages.map((message) => ({ ...message, id: nextId.current++ }));
+    setLines((current) => [...current, ...added]);
+  }
+
+  async function startVoice() {
+    if (voiceStart.current) return;
+    const attempt = Symbol();
+    voiceStart.current = attempt;
     setError(null);
-    setStarting(true);
+    setStartingVoice(true);
     try {
       const { signed_url } = await api.chatSession();
-      setVoice(withVoice);
+      if (voiceStart.current !== attempt) return;
       startSession({
         signedUrl: signed_url,
-        textOnly: !withVoice,
         onMessage: ({ message, role }) => {
-          if (!message) return;
-          setLines((l) => [...l, { id: nextId.current++, role, text: message }]);
+          const transcript = message?.trim();
+          if (transcript) appendLines({ role, text: transcript });
         },
-        onError: (message) => setError(typeof message === "string" ? message : "The assistant hit an error. Try again."),
+        onError: () => {
+          setError({ title: "Voice unavailable", message: "Couldn't connect to voice. You can still type below." });
+        },
       });
     } catch (e) {
-      if (e instanceof ApiError && (e.status === 404 || e.status === 405)) {
-        setError("The assistant isn't connected on this server yet. The backend needs POST /api/chat/session.");
-      } else if (e instanceof ApiError && e.status === 401) {
-        setError("Sign in to use the assistant.");
-      } else {
-        setError(e instanceof ApiError ? e.message : "Couldn't start the assistant. Try again.");
+      if (voiceStart.current === attempt) {
+        setError({ title: "Voice unavailable", message: e instanceof ApiError ? e.message : "Couldn't start voice. Try again." });
       }
     } finally {
-      setStarting(false);
+      if (voiceStart.current === attempt) {
+        voiceStart.current = null;
+        setStartingVoice(false);
+      }
     }
   }
 
-  function send() {
-    const msg = text.trim();
-    if (!msg || !connected) return;
-    setText("");
-    // In voice mode the transcript arrives through onMessage; in text mode we add it ourselves.
-    if (!voice) setLines((l) => [...l, { id: nextId.current++, role: "user", text: msg }]);
-    sendUserMessage(msg);
+  async function send(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const draft = text;
+    const message = draft.trim();
+    if (!message || sending || connectingVoice) return;
+    setError(null);
+
+    if (connected) {
+      try {
+        sendUserMessage(message);
+        setText("");
+      } catch {
+        setError({ title: "Message failed", message: "Couldn't send that message to the voice session. Try again." });
+      }
+      return;
+    }
+
+    setSending(true);
+    try {
+      const history: IntakeMessage[] = lines.slice(-12).map((line) => ({
+        role: line.role === "user" ? "user" : "assistant",
+        text: line.text.slice(0, 2000),
+      }));
+      const { reply } = await api.chatMessage(message, history);
+      appendLines({ role: "user", text: message }, { role: "agent", text: reply });
+      setText((current) => current === draft ? "" : current);
+    } catch (e) {
+      setError({ title: "Message failed", message: e instanceof ApiError ? e.message : "Couldn't get an answer. Try again." });
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -124,49 +158,38 @@ function AssistantPanel() {
             Ask why an account is a Contact, what evidence backs the draft, or where the pipeline stands.
           </p>
         ) : null}
-        {lines.map((l) => (
-          <div key={l.id} className="flex flex-col gap-1">
-            <span className="text-[13px] text-muted-foreground">{l.role === "user" ? "You" : "Signal"}</span>
-            <p className={l.role === "user" ? "rounded-md bg-muted px-3 py-2" : ""}>{l.text}</p>
+        {lines.map((line) => (
+          <div key={line.id} className="flex flex-col gap-1">
+            <span className="text-[13px] text-muted-foreground">{line.role === "user" ? "You" : "Signal"}</span>
+            <p className={line.role === "user" ? "rounded-md bg-muted px-3 py-2 break-words" : "break-words"}>{line.text}</p>
           </div>
         ))}
-        {error ? <InlineAlert tone="danger" title="Assistant unavailable">{error}</InlineAlert> : null}
+        {error ? <InlineAlert tone="danger" title={error.title}>{error.message}</InlineAlert> : null}
         <div ref={endRef} />
       </div>
 
       <div className="flex shrink-0 flex-col gap-2 border-t bg-card px-5 pt-3 pb-4">
-        {connected ? (
-          <>
-            <div className="flex items-center justify-between text-[13px] text-muted-foreground">
-              <span role="status">{voice ? (isSpeaking ? "Signal is speaking…" : "Listening… you can also type.") : "Text chat"}</span>
-              <Button variant="outline" size="sm" onClick={() => endSession()}>
-                <PhoneOff aria-hidden /> End
-              </Button>
-            </div>
-            <form
-              className="flex gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                send();
-              }}
-            >
-              <Input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type a message" aria-label="Message Signal Assistant" maxLength={500} />
-              <Button type="submit" size="icon" aria-label="Send message to assistant" disabled={!text.trim()}>
-                <Send aria-hidden />
-              </Button>
-            </form>
-          </>
-        ) : (
-          <div className="flex gap-2">
-            <Button className="flex-1" disabled={busy} onClick={() => void start(true)}>
-              {busy ? <Spinner /> : <Mic aria-hidden />} Talk
+        <div className="flex items-center justify-between text-[13px] text-muted-foreground">
+          <span role="status">
+            {connected ? (isSpeaking ? "Signal is speaking…" : "Listening…") : connectingVoice ? "Connecting voice…" : sending ? "Replying…" : "Text chat"}
+          </span>
+          {connected ? (
+            <Button variant="outline" size="sm" onClick={() => endSession()}>
+              <PhoneOff aria-hidden /> End
             </Button>
-            <Button variant="outline" className="flex-1" disabled={busy} onClick={() => void start(false)}>
-              <Keyboard aria-hidden /> Type
+          ) : (
+            <Button variant="outline" size="sm" disabled={connectingVoice || sending} onClick={() => void startVoice()}>
+              {connectingVoice ? <Spinner /> : <Mic aria-hidden />} Talk
             </Button>
-          </div>
-        )}
-        <p className="text-xs text-muted-foreground">Voice sessions end after 5 minutes. Audio is processed by ElevenLabs.</p>
+          )}
+        </div>
+        <form className="flex gap-2" onSubmit={send}>
+          <Input className="min-w-0" value={text} onChange={(e) => setText(e.target.value)} placeholder="Type a message" aria-label="Message Signal Assistant" maxLength={500} />
+          <Button type="submit" size="icon" aria-label="Send message to assistant" disabled={!text.trim() || connectingVoice || sending}>
+            <Send aria-hidden />
+          </Button>
+        </form>
+        <p className="text-xs text-muted-foreground">Voice audio is processed by ElevenLabs.</p>
       </div>
     </div>
   );

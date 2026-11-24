@@ -64,8 +64,9 @@ export const api = {
   moveLead: (accountId: string, change: PipelineChange) =>
     request<Workspace>("POST", `/api/pipeline/${encodeURIComponent(accountId)}/stage`, change),
   syncFeedback: () => request<Workspace>("POST", "/api/feedback/gmail/sync"),
-  // Proposed route, not in the contract yet: returns a short-lived ElevenLabs signed URL for the
-  // private Signal Assistant agent. JSON body so the backend's same-origin write checks apply.
+  chatMessage: (message: string, history: IntakeMessage[]) =>
+    request<{ reply: string }>("POST", "/api/chat/message", { message, history }),
+  // The private voice agent uses a short-lived signed URL.
   chatSession: () => request<{ signed_url: string }>("POST", "/api/chat/session", {}),
   // Proposed route, not in the contract yet. The UI shows "not available" on 404.
   ask: (accountId: string, question: string) =>

@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from secrets import token_urlsafe
 
 import httpx
@@ -5,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from signal_app.config import Settings
 from signal_app.main import create_app
+from signal_app.models import Workspace
 from signal_app.providers import Providers
 
 
@@ -91,3 +94,41 @@ def test_sessions_are_rate_limited():
     assert codes[:20] == [200] * 20
     assert codes[20] == 429
     assert len(calls) == 20
+
+
+
+def test_text_chat_works_without_voice_and_uses_only_safe_workspace_fields():
+    fixture = Path(__file__).resolve().parents[2] / 'docs' / 'workspace.example.json'
+    workspace = Workspace.model_validate_json(fixture.read_text())
+    calls = []
+
+    class ReadOnlyStore(NoStore):
+        def read(self, _view):
+            return workspace
+
+    class AssistantProvider:
+        def complete(self, schema, instructions, context, *, max_tokens):
+            calls.append(json.loads(context))
+            return schema(reply='There is one matched account.')
+
+    config = settings(elevenlabs_api_key='', elevenlabs_agent_id='')
+    app = create_app(config, store=ReadOnlyStore(), providers=AssistantProvider())
+    test_client = TestClient(app)
+    payload = {'message': 'How many accounts are matched?', 'history': [{'role': 'user', 'text': 'Hello'}]}
+    assert test_client.post('/api/chat/message', json=payload, headers=HEADERS).status_code == 401
+    signed_in(test_client)
+    assert test_client.post('/api/chat/message', json=payload, headers={'Origin': 'https://other.example'}).status_code == 403
+    assert calls == []
+
+    result = test_client.post('/api/chat/message', json=payload, headers=HEADERS)
+    assert result.status_code == 200
+    assert result.json() == {'reply': 'There is one matched account.'}
+    (request,) = calls
+    assert request['question'] == payload['message'] and request['history'] == payload['history']
+    assert request['pipeline']['matched'] == 1
+    assert request['accounts'][0]['evidence'][0]['title']
+    assert request['accounts'][0]['draft']['evidence_ids']
+    serialized = json.dumps(request)
+    assert workspace.accounts[0].draft.test_recipient not in serialized
+    assert workspace.accounts[0].contact.email_masked not in serialized
+    assert workspace.accounts[0].draft.body not in serialized
