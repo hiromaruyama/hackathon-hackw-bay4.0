@@ -44,7 +44,7 @@ export function IntakeChat({ product, onApply }: { product: IntakeFields; onAppl
     setError(null);
     try {
       const result = mode === "sample"
-        ? { reply: "Sample intake captured your text for the form. Add pricing, constraints, and customer wins in the form.", proposal: { description: input } }
+        ? { reply: "Review the suggested description and apply it to your brief.", proposal: { description: input } }
         : await api.intakeChat({ ...product, ...proposal }, history.slice(-12), input);
       const updated = Object.fromEntries(Object.entries(result.proposal).filter(([, value]) => value != null));
       setProposal((previous) => ({ ...previous, ...updated }));
@@ -74,14 +74,14 @@ export function IntakeChat({ product, onApply }: { product: IntakeFields; onAppl
           </ol>
         </ScrollArea>
       ) : (
-        <p className="text-sm text-muted-foreground">Describe your product, who buys it, and any pricing or constraints. You can review suggested values before adding them to the form.</p>
+        <p className="text-sm text-muted-foreground">Describe your product and who buys it.</p>
       )}
 
       <form onSubmit={submit}>
         <FieldGroup className="gap-3">
           <Field>
-            <FieldLabel htmlFor="intake-message">Tell us about your product</FieldLabel>
-            <Textarea id="intake-message" rows={3} maxLength={2000} value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} />
+            <FieldLabel htmlFor="intake-message">Your message <span aria-hidden className="text-destructive">*</span></FieldLabel>
+            <Textarea id="intake-message" required rows={3} maxLength={2000} value={message} onChange={(event) => setMessage(event.target.value)} disabled={busy} />
           </Field>
           <Button type="submit" className="self-end" disabled={busy || !message.trim()}>
             {busy ? <Spinner data-icon="inline-start" /> : <Send data-icon="inline-start" />}
@@ -100,7 +100,7 @@ export function IntakeChat({ product, onApply }: { product: IntakeFields; onAppl
 
       {proposedFields.length ? (
         <section aria-labelledby="intake-proposal" className="flex flex-col gap-3 rounded-lg border p-4">
-          <h3 id="intake-proposal" className="font-semibold">Suggested form values</h3>
+          <h3 id="intake-proposal" className="font-semibold">Suggested changes</h3>
           <dl className="flex flex-col gap-2 text-sm">
             {proposedFields.map((key) => {
               const value = proposal[key];
@@ -113,7 +113,7 @@ export function IntakeChat({ product, onApply }: { product: IntakeFields; onAppl
             })}
           </dl>
           <Button variant="outline" className="self-start" disabled={busy} onClick={() => { onApply(proposal); setProposal({}); }}>
-            Apply to form
+            Apply to brief
           </Button>
         </section>
       ) : null}

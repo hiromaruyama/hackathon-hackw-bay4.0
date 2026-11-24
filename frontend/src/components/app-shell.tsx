@@ -29,7 +29,7 @@ const NAV = [
 
 const CHAT = { href: "/chat/", label: "Chat", icon: MessageCircle };
 
-export function AppShell({ commands, children, hideAssistant = false }: { hideAssistant?: boolean; commands?: React.ReactNode; children: React.ReactNode }) {
+export function AppShell({ commands, children, hideAssistant = false, fullWidth = false }: { fullWidth?: boolean; hideAssistant?: boolean; commands?: React.ReactNode; children: React.ReactNode }) {
   const { status, mode, loadError, refresh, workspace } = useWorkspace();
   const pathname = usePathname();
   const chat = pathname === CHAT.href;
@@ -71,7 +71,7 @@ export function AppShell({ commands, children, hideAssistant = false }: { hideAs
               {commands}
             </div>
           ) : null}
-          <main className={cn("mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6", fullPageChat && "min-h-0 flex-1", isHome && showWorkspace && "max-w-none gap-0 p-0 md:p-0")}>
+          <main className={cn("mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6", fullWidth && "max-w-none", fullPageChat && "min-h-0 flex-1", isHome && showWorkspace && "max-w-none gap-0 p-0 md:p-0")}>
             {status === "ready" && loadError ? (
               <InlineAlert tone="danger" title="Couldn't refresh the workspace" action={<Button variant="outline" size="sm" onClick={() => void refresh()}>Retry</Button>}>
                 {loadError.message} You're seeing the last saved view.

@@ -1,367 +1,210 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { ChevronDown, ExternalLink, FilePenLine } from "lucide-react";
+import type { EditorView } from "prosemirror-view";
 import { AppShell } from "@/components/app-shell";
 import { IntakeChat } from "@/components/intake-chat";
-import { InlineAlert, Panel, PanelHeader } from "@/components/signal";
+import { focusBriefField, ProfileBriefEditor } from "@/components/profile-brief-editor";
+import { InlineAlert } from "@/components/signal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Field as FormField, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
+import {
+  buyerInput, buyerKeys, buyerLabels, intakeEdits, productInput, productKeys, savedBrief, validateBrief,
+  type Brief, type BriefKey,
+} from "@/lib/profile-brief";
+import type { ExpansionDecision, Icp, IntakeFields } from "@/lib/types";
 import { useWorkspace } from "@/lib/workspace-context";
 import { dateTime } from "@/lib/format";
-import type { ExpansionDecision, IcpFieldKey, IcpFields, IndustryCode, IntakeFields } from "@/lib/types";
-import { ApiError } from "@/lib/api";
-import { cn } from "@/lib/utils";
 
 export default function ProfilePage() {
-  return (
-    <AppShell>
-      <Profile />
-    </AppShell>
-  );
+  return <AppShell fullWidth hideAssistant><Profile /></AppShell>;
 }
 
-const lines = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
-const join = (a: string[] | undefined) => (a ?? []).join("\n");
-
-const FIELD_META: { key: IcpFieldKey; label: string; list: boolean; hint?: string }[] = [
-  { key: "industries", label: "Industries", list: true },
-  { key: "industry_codes", label: "Industry codes", list: true, hint: "One per line, for example NAICS 221114 or SIC 4911" },
-  { key: "geography", label: "Geography", list: true },
-  { key: "headcount_band", label: "Headcount", list: false, hint: "For example, 50–500" },
-  { key: "revenue_band", label: "Revenue", list: false },
-  { key: "buyer_titles", label: "Buyer titles", list: true },
-  { key: "seniority", label: "Seniority", list: true },
-  { key: "triggers", label: "Buying triggers", list: true },
-  { key: "exclusions", label: "Exclusions", list: true, hint: "A confirmed exclusion rejects the account" },
-];
-
-type FieldDraft = Record<IcpFieldKey, string>;
-
-function toDraft(f: IcpFields): FieldDraft {
-  return {
-    industries: join(f.industries),
-    industry_codes: join(f.industry_codes?.map((entry) => `${entry.system} ${entry.code}`)),
-    geography: join(f.geography),
-    headcount_band: f.headcount_band ?? "",
-    revenue_band: f.revenue_band ?? "",
-    buyer_titles: join(f.buyer_titles),
-    seniority: join(f.seniority),
-    triggers: join(f.triggers),
-    exclusions: join(f.exclusions),
-  };
-}
-
-function fromDraft(d: FieldDraft): IcpFields {
-  return {
-    industries: lines(d.industries),
-    industry_codes: lines(d.industry_codes).map((line) => {
-      const [system, code] = line.toUpperCase().split(/\s+/);
-      return { system: system as IndustryCode["system"], code };
-    }),
-    geography: lines(d.geography),
-    headcount_band: d.headcount_band.trim() || null,
-    revenue_band: d.revenue_band.trim() || null,
-    buyer_titles: lines(d.buyer_titles),
-    seniority: lines(d.seniority),
-    triggers: lines(d.triggers),
-    exclusions: lines(d.exclusions),
-  };
-}
-
-function publicEvidenceLink(value: string | undefined): string | null {
-  if (!value) return null;
+function publicEvidenceLink(value: string | undefined) {
   try {
-    const url = new URL(value);
-    if ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) {
-      return url.href;
-    }
-  } catch {
-    return null;
-  }
+    const url = new URL(value ?? "");
+    if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) return url.href;
+  } catch { /* A source without a public URL still has a readable title. */ }
   return null;
 }
 
 function Profile() {
   const { workspace, generateIcp, approveIcp, pending } = useWorkspace();
-  const w = workspace!;
-  const p = w.product;
-
-  const [intake, setIntake] = useState({
-    name: p?.name ?? "GeoFlow",
-    description: p?.description ?? "",
-    capabilities: join(p?.capabilities),
-    constraints: join(p?.constraints),
-    customers: join(p?.customers_and_wins),
-    pricing: p?.pricing ?? "",
-    contract: p?.contract_value ?? "",
-  });
-  const [intakeError, setIntakeError] = useState<string | null>(null);
-  const [genError, setGenError] = useState<ApiError | null>(null);
-  const [intakeTab, setIntakeTab] = useState("form");
-
-  const icp = w.icp;
-  const expansionEvidenceLink = publicEvidenceLink(icp?.expansion?.evidence.url);
-  const [fields, setFields] = useState<FieldDraft | null>(icp ? toDraft(icp.fields) : null);
+  const { product, icp } = workspace!;
+  const saved = useMemo(() => savedBrief(product, icp?.fields), [product, icp]);
+  const revision = icp?.revision;
+  const editor = useRef<EditorView | null>(null);
+  const [tab, setTab] = useState("brief");
+  const [edits, setEdits] = useState<Partial<Brief>>({});
+  const [carry, setCarry] = useState<Partial<Brief> | null>(null);
+  const [seenRevision, setSeenRevision] = useState(revision);
   const [decision, setDecision] = useState<ExpansionDecision>(icp?.expansion_decision ?? "dismiss");
   const [segment, setSegment] = useState(icp?.expansion?.segment ?? "");
-  const [approveError, setApproveError] = useState<ApiError | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<ReturnType<typeof validateBrief>>(null);
 
-  // Reset the editor whenever the server returns a new revision.
-  const [seenRevision, setSeenRevision] = useState(icp?.revision);
-  if (icp && icp.revision !== seenRevision) {
-    setSeenRevision(icp.revision);
-    setFields(toDraft(icp.fields));
-    setDecision(icp.expansion_decision ?? (icp.expansion ? "accept" : "dismiss"));
-    setSegment(icp.expansion?.segment ?? "");
+  if (revision !== seenRevision) {
+    setSeenRevision(revision);
+    setEdits(!icp?.approved && carry ? carry : {});
+    setCarry(null);
+    setFieldError(null);
+    setDecision(icp?.expansion_decision ?? (icp?.expansion ? "accept" : "dismiss"));
+    setSegment(icp?.expansion?.segment ?? "");
   }
 
-  const dirty = Boolean(icp && fields && (
-    JSON.stringify(fromDraft(fields)) !== JSON.stringify(fromDraft(toDraft(icp.fields))) ||
-    (icp.approved && icp.expansion && (decision !== icp.expansion_decision || (decision === "edit" && segment.trim() !== icp.expansion.segment)))
-  ));
-  const intakeValues = {
-    name: intake.name.trim() || "GeoFlow",
-    description: intake.description.trim(),
-    capabilities: lines(intake.capabilities),
-    constraints: lines(intake.constraints),
-    customers_and_wins: lines(intake.customers),
-    pricing: intake.pricing.trim() || null,
-    contract_value: intake.contract.trim() || null,
-  };
+  const brief = useMemo(() => ({ ...saved, ...edits }), [saved, edits]);
+  const productChanged = productKeys.some((key) => brief[key].trim() !== saved[key].trim());
+  const buyerChanged = buyerKeys.some((key) => brief[key].trim() !== saved[key].trim());
+  const segmentChanged = Boolean(icp?.expansion && (decision !== (icp.expansion_decision ?? "dismiss") ||
+    (decision === "edit" && segment.trim() !== icp.expansion.segment)));
+  const dirty = productChanged || buyerChanged || segmentChanged;
+  const generating = !icp || productChanged || (icp.approved && !dirty);
+  const busy = pending === "icp-generate" || pending === "icp-approve";
+  const status = dirty ? "Unsaved edits" : icp?.approved ? "Approved" : "Draft";
 
-  async function onGenerate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!intakeValues.description) {
-      setIntakeError("Describe what you sell first.");
+  function updateBrief(next: Brief) {
+    setEdits(Object.fromEntries(Object.entries(next).filter(([key, value]) => value !== saved[key as BriefKey])));
+    setError(null);
+    setFieldError(null);
+  }
+
+  function applyProposal(proposal: IntakeFields) {
+    updateBrief({ ...brief, ...intakeEdits(proposal) });
+    setTab("brief");
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    const invalid = validateBrief(brief);
+    setFieldError(invalid);
+    if (invalid) {
+      focusBriefField(editor.current, invalid.key);
       return;
     }
-    setGenError(null);
-    const res = await generateIcp(intakeValues);
-    if (!res.ok) setGenError(res.error ?? null);
-  }
-
-  function applyIntake(proposal: IntakeFields) {
-    setIntake((current) => ({
-      name: proposal.name ?? current.name,
-      description: proposal.description ?? current.description,
-      capabilities: proposal.capabilities ? join(proposal.capabilities) : current.capabilities,
-      constraints: proposal.constraints ? join(proposal.constraints) : current.constraints,
-      customers: proposal.customers_and_wins ? join(proposal.customers_and_wins) : current.customers,
-      pricing: proposal.pricing ?? current.pricing,
-      contract: proposal.contract_value ?? current.contract,
-    }));
-    setIntakeError(null);
-    setGenError(null);
-    setIntakeTab("form");
-  }
-
-  async function onApprove() {
-    if (!icp || !fields) return;
-    if (lines(fields.industry_codes).some((line) => !/^(NAICS|SIC)\s+[0-9]{2,6}(?:-[0-9]{2})?$/i.test(line))) {
-      setApproveError(new ApiError(422, "invalid_industry_code", "Use one industry code per line, such as NAICS 221114 or SIC 4911."));
-      return;
+    setError(null);
+    if (generating) {
+      // When both halves were edited, keep manual buyer changes over the generated suggestions.
+      setCarry(Object.fromEntries(buyerKeys.filter((key) => brief[key] !== saved[key]).map((key) => [key, brief[key]])));
+      const result = await generateIcp(productInput(brief));
+      if (!result.ok) {
+        setCarry(null);
+        setError(result.error?.message ?? "Try generating the profile again.");
+      }
+    } else {
+      const result = await approveIcp({
+        revision: icp.revision, fields: buyerInput(brief), expansion_decision: decision,
+        ...(decision === "edit" ? { expansion_segment: segment.trim() } : {}),
+      });
+      if (!result.ok) setError(result.error?.message ?? "Try approving this revision again.");
     }
-    setApproveError(null);
-    const res = await approveIcp({
-      revision: icp.revision,
-      fields: fromDraft(fields),
-      expansion_decision: decision,
-      ...(decision === "edit" ? { expansion_segment: segment.trim() } : {}),
-    });
-    if (!res.ok) setApproveError(res.error ?? null);
   }
 
-  const set = (k: keyof typeof intake) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setIntake((s) => ({ ...s, [k]: e.target.value }));
-    if (k === "description") setIntakeError(null);
-  };
+  const expansion = icp?.expansion;
+  const source = publicEvidenceLink(expansion?.evidence.url);
 
   return (
-    <>
-      <div className="flex flex-col gap-1">
+    <div className="flex w-full min-w-0 flex-col gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-[22px] leading-tight font-bold">Product and target buyers</h1>
-        <p className="text-muted-foreground">
-          {icp
-            ? icp.approved
-              ? `Revision ${icp.revision} approved ${dateTime(icp.updated_at)}. Discovery uses this revision.`
-              : `Revision ${icp.revision} is a draft. Edit anything, then approve it to find accounts.`
-            : "Describe what you sell in chat or in the form. Review the proposed profile before discovering accounts."}
-        </p>
-      </div>
+        <div aria-live="polite" className="flex items-center gap-2">
+          {icp && <span className="text-sm text-muted-foreground">Revision {icp.revision}</span>}
+          <Badge variant="outline">
+            <span aria-hidden className={status === "Approved" ? "size-1.5 rounded-full bg-success" : "size-1.5 rounded-full bg-warning"} />
+            {status}
+          </Badge>
+        </div>
+      </header>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <Panel aria-labelledby="intake-title">
-          <PanelHeader title="Your product" id="intake-title" />
-          <Tabs value={intakeTab} onValueChange={setIntakeTab} className="gap-4">
-            <TabsList aria-label="Product intake">
-              <TabsTrigger value="form">Form</TabsTrigger>
-              <TabsTrigger value="chat">Intake chat</TabsTrigger>
-            </TabsList>
-            <TabsContent value="chat" forceMount className="data-[state=inactive]:hidden">
-              <IntakeChat product={{ ...intakeValues, description: intakeValues.description || null }} onApply={applyIntake} />
-            </TabsContent>
-            <TabsContent value="form">
-              <form onSubmit={onGenerate}>
-                <FieldGroup className="gap-4">
-                  <Field id="name" label="Product name">
-                    <Input id="name" value={intake.name} onChange={set("name")} maxLength={250} />
-                  </Field>
-                  <Field id="description" label="Description" error={intakeError}>
-                    <Textarea id="description" rows={3} value={intake.description} onChange={set("description")} aria-invalid={intakeError ? true : undefined} aria-describedby={intakeError ? "description-error" : undefined} maxLength={4000} placeholder="Site analysis software for US renewable energy developers." />
-                  </Field>
-                  <Field id="capabilities" label="Capabilities" hint="One per line">
-                    <Textarea id="capabilities" rows={3} value={intake.capabilities} onChange={set("capabilities")} />
-                  </Field>
-                  <Field id="constraints" label="Constraints" hint="One per line">
-                    <Textarea id="constraints" rows={2} value={intake.constraints} onChange={set("constraints")} />
-                  </Field>
-                  <Field id="customers" label="Customers and wins" hint="One per line">
-                    <Textarea id="customers" rows={2} value={intake.customers} onChange={set("customers")} />
-                  </Field>
-                  <FieldGroup className="grid gap-4 sm:grid-cols-2">
-                    <Field id="pricing" label="Pricing">
-                      <Input id="pricing" value={intake.pricing} onChange={set("pricing")} maxLength={250} />
-                    </Field>
-                    <Field id="contract" label="Contract value">
-                      <Input id="contract" value={intake.contract} onChange={set("contract")} maxLength={250} />
-                    </Field>
-                  </FieldGroup>
-                  {genError ? (
-                    <InlineAlert tone="danger" title="The profile wasn't generated">
-                      {genError.message}
-                    </InlineAlert>
-                  ) : null}
-                  <Button type="submit" variant={icp ? "outline" : "default"} className="self-end" disabled={pending === "icp-generate"}>
-                    {pending === "icp-generate" ? <Spinner data-icon="inline-start" /> : null}
-                    {pending === "icp-generate" ? "Generating…" : icp ? "Generate a new revision" : "Generate profile"}
-                  </Button>
-                </FieldGroup>
-              </form>
-            </TabsContent>
-          </Tabs>
-        </Panel>
-
-        <Panel aria-labelledby="icp-title">
-          <PanelHeader title={icp ? `Ideal customer profile, revision ${icp.revision}` : "Ideal customer profile"} id="icp-title">
-            {icp ? (
-              <span className={cn("text-sm font-semibold", icp.approved && !dirty ? "text-success" : "text-warning")}>
-                {icp.approved && !dirty ? "Approved" : dirty ? "Edited, not approved" : "Draft"}
-              </span>
-            ) : null}
-          </PanelHeader>
-
-          {!icp || !fields ? (
-            <div className="flex flex-col items-start gap-2 py-10">
-              <span className="text-lg font-bold">No profile yet</span>
-              <span className="max-w-[48ch] text-muted-foreground">Fill in what you sell and generate a profile. You'll be able to edit every field before approving it.</span>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                {FIELD_META.map((m) => {
-                  const conf = icp.confidence[m.key];
-                  const empty = !fields[m.key].trim();
-                  return (
-                    <Field
-                      key={m.key}
-                      id={`f-${m.key}`}
-                      label={m.label}
-                      hint={empty ? "Unknown. Leave blank if you don't know." : m.hint ?? (m.list ? "One per line" : undefined)}
-                      aside={conf !== undefined ? <span className="text-xs text-muted-foreground tabular-nums">Confidence {conf.toFixed(1)}</span> : null}
-                    >
-                      {m.list ? (
-                        <Textarea id={`f-${m.key}`} rows={2} value={fields[m.key]} onChange={(e) => setFields({ ...fields, [m.key]: e.target.value })} />
-                      ) : (
-                        <Input id={`f-${m.key}`} value={fields[m.key]} placeholder="Unknown" onChange={(e) => setFields({ ...fields, [m.key]: e.target.value })} />
-                      )}
-                    </Field>
-                  );
-                })}
-              </div>
-
-              {icp.fields.industry_codes?.length ? (
-                <ul aria-label="Recognized industry codes" className="flex flex-col gap-2">
-                  {icp.fields.industry_codes.map((entry) => (
-                    <li key={`${entry.system}-${entry.code}`} className="flex flex-wrap items-center gap-2 text-sm">
-                      <Badge variant="outline">{entry.system} {entry.code}</Badge>
-                      <span>{entry.title}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-
-              <div className="rounded-md border p-4">
-                <h3 className="font-semibold">Adjacent segment</h3>
-                {icp.expansion ? (
-                  <div className="mt-2 flex flex-col gap-3">
-                    <p>
-                      <span className="font-semibold">{icp.expansion.segment}</span>
-                      <span className="text-muted-foreground"> {icp.expansion.reason}</span>
-                    </p>
-                    {expansionEvidenceLink ? (
-                      <a className="text-sm" href={expansionEvidenceLink} target="_blank" rel="noreferrer noopener">
-                        {icp.expansion.evidence.title}
-                      </a>
-                    ) : (
-                      <span className="text-sm">{icp.expansion.evidence.title}</span>
-                    )}
-                    <div role="radiogroup" aria-label="Adjacent segment decision" className="flex flex-wrap gap-2">
-                      {(["accept", "edit", "dismiss"] as const).map((d) => (
-                        <Button key={d} type="button" role="radio" aria-checked={decision === d} variant={decision === d ? "default" : "outline"} size="sm" onClick={() => setDecision(d)}>
-                          {d === "accept" ? "Accept" : d === "edit" ? "Edit" : "Dismiss"}
-                        </Button>
-                      ))}
-                    </div>
-                    {decision === "edit" ? (
-                      <Field id="segment" label="Edited segment">
-                        <Input id="segment" value={segment} onChange={(e) => setSegment(e.target.value)} />
-                      </Field>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="mt-1 text-sm text-muted-foreground">No adjacent segment was suggested. Signal only suggests one when a public source supports it.</p>
-                )}
-              </div>
-
-              {approveError ? (
-                <InlineAlert tone="danger" title="The profile wasn't approved">
-                  {approveError.message}
-                </InlineAlert>
-              ) : null}
-
-              <div className="flex flex-wrap items-center justify-end gap-3">
-                {icp.approved && !dirty ? <span className="text-sm text-muted-foreground">Edit a field to approve a new revision.</span> : null}
-                <Button className="h-10 font-semibold" onClick={onApprove} disabled={pending === "icp-approve" || (icp.approved && !dirty) || (decision === "edit" && !segment.trim())}>
-                  {pending === "icp-approve" ? <Spinner /> : null}
-                  {pending === "icp-approve" ? "Approving…" : `Approve as revision ${icp.revision + 1}`}
-                </Button>
-              </div>
-            </div>
+      <Tabs value={tab} onValueChange={setTab} className="gap-0">
+        <div className="sticky top-0 z-10 grid grid-cols-[1fr_auto] items-center gap-x-1 gap-y-1 border-b bg-background py-2 sm:flex sm:flex-wrap sm:gap-x-3">
+          <TabsList aria-label="Product intake">
+            <TabsTrigger value="brief"><FilePenLine aria-hidden /> Brief</TabsTrigger>
+            <TabsTrigger value="chat" disabled={busy}>Intake chat</TabsTrigger>
+          </TabsList>
+          {tab === "brief" && (
+            <nav aria-label="Jump to section" className="col-span-2 row-start-2 flex gap-1">
+              <Button type="button" size="sm" variant="ghost" aria-label="Jump to product" onClick={() => focusBriefField(editor.current, "name")}>Product</Button>
+              <Button type="button" size="sm" variant="ghost" aria-label="Jump to target buyers" onClick={() => focusBriefField(editor.current, "industries")}>Target buyers</Button>
+            </nav>
           )}
-        </Panel>
-      </div>
-    </>
+          {tab === "brief" && (
+            <Button type="submit" form="profile-form" className="col-start-2 row-start-1 ml-auto" disabled={busy || (!generating && decision === "edit" && !segment.trim())}
+              variant={icp?.approved && !dirty ? "outline" : "default"}>
+              {busy && <Spinner data-icon="inline-start" />}
+              {busy ? (pending === "icp-generate" ? "Generating…" : "Approving…") : generating
+                ? (icp ? "New revision" : "Generate profile") : "Approve revision"}
+            </Button>
+          )}
+          {tab === "brief" && fieldError && <FieldError id="brief-error" className="col-span-2 sm:basis-full">{fieldError.message}</FieldError>}
+        </div>
+
+        <TabsContent value="brief" forceMount className="data-[state=inactive]:hidden">
+          <form id="profile-form" onSubmit={submit}>
+            <FieldGroup className="gap-0">
+              <Field data-invalid={Boolean(fieldError) || undefined} className="gap-0">
+                <span id="brief-label" className="sr-only">Profile brief</span>
+                <ProfileBriefEditor value={brief} editorRef={editor} onChange={updateBrief} disabled={busy} invalid={Boolean(fieldError)} />
+              </Field>
+
+              {expansion && (
+                <section aria-labelledby="adjacent-title" className="flex flex-col gap-2 border-t py-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 id="adjacent-title" className="text-sm font-semibold">Adjacent segment</h2>
+                    {source && <a href={source} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm" title={expansion.evidence.title} aria-label={`Source: ${expansion.evidence.title}`}>View source <ExternalLink aria-hidden className="size-3" /></a>}
+                  </div>
+                  <p className="text-sm"><strong>{expansion.segment}</strong> · {expansion.reason}</p>
+                  {!source && <span className="text-sm text-muted-foreground">{expansion.evidence.title}</span>}
+                  <div role="group" aria-label="Adjacent segment decision" className="flex flex-wrap gap-1">
+                    {(["accept", "edit", "dismiss"] as const).map((value) => (
+                      <Button type="button" key={value} size="sm" variant={decision === value ? "secondary" : "ghost"}
+                        aria-pressed={decision === value} disabled={busy} onClick={() => setDecision(value)}>
+                        {value === "accept" ? "Accept" : value === "edit" ? "Edit" : "Dismiss"}
+                      </Button>
+                    ))}
+                  </div>
+                  {decision === "edit" && (
+                    <Field className="max-w-xl gap-1">
+                      <FieldLabel htmlFor="segment">Edited segment <span aria-hidden className="text-destructive">*</span></FieldLabel>
+                      <Input id="segment" required={!generating} aria-required="true" maxLength={250} value={segment} disabled={busy} onChange={(e) => setSegment(e.target.value)} />
+                    </Field>
+                  )}
+                </section>
+              )}
+              {error && <InlineAlert tone="danger" title={generating ? "Generation failed" : "Approval failed"} className="my-4">{error}</InlineAlert>}
+              {icp && <footer className="border-t py-4"><RevisionDetails icp={icp} /></footer>}
+            </FieldGroup>
+          </form>
+        </TabsContent>
+        <TabsContent value="chat" forceMount className="py-5 data-[state=inactive]:hidden">
+          <IntakeChat product={{ ...productInput(brief), name: brief.name.trim() || null, description: brief.description.trim() || null }} onApply={applyProposal} />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }
 
-function Field({ id, label, hint, error, aside, children }: { id: string; label: string; hint?: string; error?: string | null; aside?: React.ReactNode; children: React.ReactNode }) {
+function RevisionDetails({ icp }: { icp: Icp }) {
   return (
-    <FormField className="gap-1.5" data-invalid={Boolean(error) || undefined}>
-      <div className="flex items-baseline justify-between gap-2">
-        <FieldLabel htmlFor={id}>{label}</FieldLabel>
-        {aside}
+    <details className="group min-w-0 text-sm">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-muted-foreground [&::-webkit-details-marker]:hidden">
+        Revision details <ChevronDown aria-hidden className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none" />
+      </summary>
+      <div className="mt-2 flex flex-col gap-2">
+        <span>{icp.approved ? "Approved" : "Generated"} {dateTime(icp.updated_at)}</span>
+        {icp.fields.industry_codes?.map((entry) => <span key={`${entry.system}-${entry.code}`}>{entry.system} {entry.code} {entry.title}</span>)}
+        <h3 className="font-medium">Field confidence</h3>
+        <dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1">
+          {buyerKeys.map((key) => icp.confidence[key] === undefined ? null : (
+            <div key={key} className="contents"><dt>{buyerLabels[key]}</dt><dd className="tabular-nums">{icp.confidence[key].toFixed(2)}</dd></div>
+          ))}
+        </dl>
       </div>
-      {children}
-      {error ? (
-        <FieldError id={`${id}-error`}>{error}</FieldError>
-      ) : hint ? (
-        <FieldDescription>{hint}</FieldDescription>
-      ) : null}
-    </FormField>
+    </details>
   );
 }
