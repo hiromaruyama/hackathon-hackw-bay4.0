@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { InlineAlert, Panel, PanelHeader } from "@/components/signal";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -13,8 +13,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { actorLabel, dateTime, percent, stageLabel, stages } from "@/lib/format";
-import type { Lead, Pipeline, PipelineChange, PipelineEvent, Stage } from "@/lib/types";
+import { actorLabel, dateTime, enrichmentText, percent, stageLabel, stages } from "@/lib/format";
+import type { Account, Lead, Pipeline, PipelineChange, PipelineEvent, Stage } from "@/lib/types";
 import { useWorkspace } from "@/lib/workspace-context";
 
 export default function PipelinePage() {
@@ -48,13 +48,16 @@ function stageAttribution(actor: string, event?: PipelineEvent) {
 
 function PipelineView() {
   const { workspace, mode, moveLead, syncFeedback, pending } = useWorkspace();
-  const p = workspace!.pipeline;
+  const { accounts, pipeline: p } = workspace!;
   const [dragging, setDragging] = useState<Lead | null>(null);
   const [change, setChange] = useState<{ lead: Lead; move: Move } | null>(null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const latestEvent = new Map(p.events.map((event) => [event.account_id, event]));
+  const leadIds = new Set(p.leads.map((lead) => lead.account_id));
+  const researchQueue = accounts.filter((account) => account.recommendation === "hold" && !leadIds.has(account.id))
+    .sort((a, b) => b.fit_score - a.fit_score || b.intent_score - a.intent_score || a.name.localeCompare(b.name));
 
   function choose(lead: Lead, move: Move) {
     setError(null);
@@ -101,6 +104,8 @@ function PipelineView() {
         <Metric label="Matched to contacted" value={percent(p.matched_to_contacted_rate)} />
         <Metric label="Waiting for approval" value={p.pending_approval_count} />
       </dl>
+
+      {researchQueue.length > 0 ? <ResearchQueue accounts={researchQueue} /> : null}
 
       <div className="overflow-x-auto pb-1">
         <ol className="grid min-w-[900px] grid-cols-5 gap-3">
@@ -216,6 +221,46 @@ function PipelineView() {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+function ResearchQueue({ accounts }: { accounts: Account[] }) {
+  return (
+    <Panel className="py-3">
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-2 rounded-sm py-1 font-semibold focus-visible:ring-2 focus-visible:ring-ring">
+          Research queue <Badge variant="secondary">{accounts.length}</Badge>
+          <ChevronDown aria-hidden className="ml-auto size-4 text-muted-foreground group-open:rotate-180" />
+        </summary>
+        <div role="region" aria-label="Accounts on research hold" tabIndex={0} className="mt-3 max-h-96 overflow-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Account</TableHead>
+                <TableHead>Fit</TableHead>
+                <TableHead>Reason for hold</TableHead>
+                <TableHead>Hunter</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {accounts.map((account) => {
+                const contact = enrichmentText(account.enrichment_status, account.contact?.verification_status);
+                return (
+                  <TableRow key={account.id}>
+                    <TableCell>
+                      <Link href={`/accounts/view/?id=${account.id}`} className="font-medium underline-offset-2 hover:underline">{account.name}</Link>
+                    </TableCell>
+                    <TableCell className="tabular-nums">{account.fit_score}</TableCell>
+                    <TableCell className="whitespace-normal">{account.reason}</TableCell>
+                    <TableCell className={contact.tone}>{contact.text}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      </details>
+    </Panel>
   );
 }
 

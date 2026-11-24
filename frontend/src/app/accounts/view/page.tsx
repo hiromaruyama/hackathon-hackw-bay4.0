@@ -41,10 +41,11 @@ function AccountView() {
     );
   }
 
-  const enr = enrichmentText(a.enrichment_status, a.contact?.verification_status);
+  const enr = enrichmentText(a.enrichment_status, a.contact?.verification_status, a.recommendation);
   const drafting = pending === `draft-${a.id}`;
   const enriching = pending === `enrich-${a.id}`;
-  const canEnrich = mode === "live" && a.recommendation === "contact" && a.enrichment_status === "not_started";
+  const canEnrich = mode === "live" && a.recommendation !== "reject" && a.enrichment_status === "not_started"
+    && Boolean(a.buyer_role) && a.icp_revision === workspace!.approved_icp_revision;
   const risk = a.negative_signal;
   const riskSource = a.evidence.find((e) => e.id === risk?.evidence_id);
 

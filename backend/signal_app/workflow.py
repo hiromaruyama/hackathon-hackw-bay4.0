@@ -570,11 +570,13 @@ class Workflow:
         self.store.write(save)
 
     @staticmethod
-    def _qualified_account(state: State, account_id: str) -> Account:
+    def _qualified_account(state: State, account_id: str, *, allow_hold: bool = False) -> Account:
         account = get_account(state, account_id)
         icp_current(state, account.icp_revision)
-        if account.recommendation != 'contact':
-            raise SignalError('account_not_qualified', 'Resolve this lead’s research hold before enriching or drafting.')
+        allowed = ('contact', 'hold') if allow_hold else ('contact',)
+        if account.recommendation not in allowed:
+            required = 'Contact or Hold' if allow_hold else 'Contact'
+            raise SignalError('account_not_qualified', f'This action requires an account marked {required}.')
         if not state.product or not account.buyer_role:
             raise SignalError('buyer_role_missing', 'Approve a buyer title before looking up a contact or drafting.')
         return account
@@ -605,7 +607,7 @@ class Workflow:
         cost = self.settings.flexprice_enrichment_cost
 
         def reserve(graph: GraphTransaction, state: State) -> UsageEvent:
-            current = self._qualified_account(state, account.id)
+            current = self._qualified_account(state, account.id, allow_hold=account.recommendation == 'hold')
             if current.researched_at != account.researched_at:
                 raise SignalError('discovery_changed', 'Refresh the account and use the current research.')
             usage = state.usage or Usage(enrichment_cost=float(cost))
@@ -670,7 +672,7 @@ class Workflow:
 
     def enrich_account(self, account_id: str, actor: str) -> Workspace:
         with self._draft_generation_lock:
-            account = self.store.read(lambda graph, state: self._qualified_account(state, account_id))
+            account = self.store.read(lambda graph, state: self._qualified_account(state, account_id, allow_hold=True))
             self._enrich_if_needed(account, actor)
             return self.workspace()
 
@@ -722,8 +724,8 @@ class Workflow:
             validate_copy(copy.subject, copy.body)
 
             def save(graph: GraphTransaction, state: State) -> UsageEvent | None:
-                current = get_account(state, account_id)
                 icp_current(state, account.icp_revision)
+                current = self._qualified_account(state, account_id)
                 if current.researched_at != account.researched_at:
                     raise SignalError('discovery_changed', 'The account was researched again. Generate the draft from the latest results.')
                 key = draft_id(account)
