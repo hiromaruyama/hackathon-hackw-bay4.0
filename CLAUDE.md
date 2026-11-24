@@ -1,6 +1,6 @@
 # Signal repository instructions
 
-Read [PLAN.md](PLAN.md) before changing scope or starting work. Its progress table reflects what is on `main`. Keep application work behind the agreed start time and follow the plan's integration and feature-freeze checkpoints.
+Read [PLAN.md](PLAN.md) before changing scope or starting work. Its progress table reflects what is on `main`. Agents only see teammate updates after fetching, so re-read `PLAN.md` and this file after every fetch, pull, or merge before continuing. `AGENTS.md` is a symlink to this file so Codex and Claude Code read the same instructions; edit `CLAUDE.md` only. Keep application work behind the agreed start time and follow the plan's integration and feature-freeze checkpoints.
 
 ## Work in parallel
 
