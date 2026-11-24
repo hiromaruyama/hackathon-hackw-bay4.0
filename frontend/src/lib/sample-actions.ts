@@ -47,15 +47,28 @@ export const simulate = {
     return w;
   },
 
-  draft(w: Workspace, accountId: string): Workspace {
+  draft(w: Workspace, accountId: string, writingOnly = false): Workspace {
     const account = w.accounts.find((a) => a.id === accountId);
     if (!account) throw new ApiError(404, "account_not_found", "That account no longer exists.");
+    if (!w.icp?.approved || account.icp_revision !== w.approved_icp_revision) conflict("Use the current approved profile.");
+    if (writingOnly) {
+      if (!account.draft) {
+        account.draft = {
+          id: `draft-${account.id}`, account_id: account.id, revision: 1, subject: "", body: "",
+          evidence_ids: [], test_recipient: null, role_based: false, synthesis_mode: "manual",
+          review_status: "writing_only", dispatch_status: "not_sent", updated_at: now(),
+        };
+        log(w, { type: "draft_created", actor: "demo", account_id: account.id, draft_id: account.draft.id, revision: 1, message: "A writing-only draft was created." });
+      }
+      return w;
+    }
     if (account.recommendation !== "contact") throw new ApiError(422, "account_not_qualified", "Only accounts marked Contact can get a draft.");
-    if (!account.draft) {
+    if (!account.draft || account.draft.review_status === "writing_only") {
+      const revision = (account.draft?.revision ?? 0) + 1;
       account.draft = {
         id: `draft-${account.id}`,
         account_id: account.id,
-        revision: 1,
+        revision,
         subject: `A question about ${account.name}'s site pipeline`,
         body: `Hi,\n\n${account.reason}\n\nGeoFlow helps development teams compare sites and interconnection constraints early.\n\nWould a short walkthrough be useful?`,
         test_recipient: "demo-inbox@geoflow.test",
@@ -66,7 +79,7 @@ export const simulate = {
         dispatch_status: "not_sent",
         updated_at: now(),
       };
-      log(w, { type: "draft_generated", actor: "system", account_id: account.id, draft_id: account.draft.id, revision: 1, message: `Wrote a draft from ${account.evidence.length} sources.` });
+      log(w, { type: "draft_generated", actor: "system", account_id: account.id, draft_id: account.draft.id, revision, message: `Wrote a draft from ${account.evidence.length} sources.` });
     }
     return w;
   },
@@ -76,7 +89,7 @@ export const simulate = {
     if (draft.revision !== expected) conflict("Someone saved a newer revision.");
     if (draft.dispatch_status !== "not_sent") conflict("This draft is locked because a send was already reserved.");
     const wasApproved = draft.review_status === "approved";
-    Object.assign(draft, { revision: expected + 1, subject, body, review_status: "pending_review", dispatch_status: "not_sent", updated_at: now() });
+    Object.assign(draft, { revision: expected + 1, subject, body, review_status: draft.synthesis_mode === "manual" ? "writing_only" : "pending_review", dispatch_status: "not_sent", updated_at: now() });
     log(w, {
       type: "draft_edited",
       actor: "demo",
@@ -90,6 +103,7 @@ export const simulate = {
 
   review(w: Workspace, draftId: string, revision: number, decision: "approve" | "reject"): Workspace {
     const { account, draft } = findDraft(w, draftId);
+    if (draft.synthesis_mode === "manual") conflict("This draft is for writing only.");
     if (draft.revision !== revision) conflict("You can only review the current revision.");
     if (draft.dispatch_status !== "not_sent") conflict("This draft is locked because a send was already reserved.");
     draft.review_status = decision === "approve" ? "approved" : "rejected";

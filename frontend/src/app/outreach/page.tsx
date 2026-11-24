@@ -55,7 +55,7 @@ function Outreach() {
 const revisionEvents = new Set(["draft_created", "draft_generated", "sequence_step_drafted", "draft_edited"]);
 
 function Review({ account, draft, steps }: { account: Account; draft: Draft; steps: Draft[] }) {
-  const { workspace, mode, saveDraft, review, send, writeSequence, schedule, prepareLinkedIn, pending } = useWorkspace();
+  const { workspace, mode, saveDraft, review, send, writeDraft, writeSequence, schedule, prepareLinkedIn, pending } = useWorkspace();
   const [subject, setSubject] = useState(draft.subject);
   const [body, setBody] = useState(draft.body);
   const [error, setError] = useState<ApiError | null>(null);
@@ -80,7 +80,8 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
   const lead = workspace!.pipeline.leads.find((item) => item.account_id === account.id);
   const priorComplete = step === 1 || (lead?.stage === "contacted" && steps[step - 2]?.dispatch_status === "sent");
 
-  const canSave = editable && dirty && subject.trim().length > 0 && body.trim().length > 0;
+  const writingOnly = draft.review_status === "writing_only";
+  const canSave = editable && dirty && (writingOnly || (subject.trim().length > 0 && body.trim().length > 0));
   const canApprove = editable && !dirty && draft.review_status !== "approved";
   const canReject = editable && !dirty && draft.review_status !== "rejected";
   const readyForOutreach = !dirty && draft.review_status === "approved" && Boolean(draft.test_recipient) && priorComplete && !lead?.bounced;
@@ -162,12 +163,12 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(315px,0.46fr)]">
         <div className="flex min-w-0 flex-col gap-4">
-          <section id="draft-document" tabIndex={-1} aria-label={linkedin ? "LinkedIn draft" : "Gmail draft"} className="min-w-0 scroll-mt-3 rounded-lg border bg-subtle">
+          <section id="draft-document" tabIndex={-1} aria-label={writingOnly ? "Writing-only draft" : linkedin ? "LinkedIn draft" : "Gmail draft"} className="min-w-0 scroll-mt-3 rounded-lg border bg-subtle">
             <div role="group" aria-label="Document controls" className="flex flex-wrap items-center justify-between gap-2 rounded-t-lg border-b bg-card px-3 py-2.5 sm:px-4">
               <div className="flex min-w-0 items-center gap-2.5">
                 <FilePenLine aria-hidden className="size-5 shrink-0 text-primary" />
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold">{linkedin ? "LinkedIn follow-up" : step > 1 ? "Gmail follow-up" : "Initial Gmail email"}</p>
+                  <p className="text-sm font-semibold">{writingOnly ? "Writing-only draft" : linkedin ? "LinkedIn follow-up" : step > 1 ? "Gmail follow-up" : "Initial Gmail email"}</p>
                   <p role="status" className="text-xs text-muted-foreground">{dirty ? "Unsaved changes" : "Saved"} · Revision {draft.revision}</p>
                 </div>
               </div>
@@ -181,7 +182,7 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
                 </Button>
               </div>
             </div>
-            <details className="group border-b bg-card">
+            {!writingOnly && <details className="group border-b bg-card">
               <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-3 py-2.5 text-xs sm:px-4 [&::-webkit-details-marker]:hidden">
                 <Mail aria-hidden className="size-3.5 text-muted-foreground" />
                 <span className="font-medium">{linkedin ? "Controlled LinkedIn profile" : "Controlled test inbox"}</span>
@@ -223,7 +224,7 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
                   </section>
                 ) : null}
               </div>
-            </details>
+            </details>}
 
             <div className="p-2.5 sm:p-5 xl:p-6">
               <article className="mx-auto flex w-full max-w-3xl flex-col gap-6 rounded-sm border bg-card px-5 py-6 shadow-sm sm:px-9 sm:py-9 xl:px-12 xl:py-10">
@@ -283,7 +284,7 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
             </Panel>
           ) : null}
 
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          {!writingOnly && <div className="flex flex-wrap items-center justify-end gap-2">
             <Button variant="ghost" className="h-10 font-semibold text-destructive hover:text-destructive" disabled={!canReject || busy} onClick={() => act(() => review(draft.id, draft.revision, "reject"))}>
               {pending === "review-reject" ? <Spinner /> : null}
               Reject draft
@@ -310,7 +311,10 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
               {pending === "send" ? <Spinner data-icon="inline-start" /> : canSend ? <Send data-icon="inline-start" /> : <Lock data-icon="inline-start" />}
               {pending === "send" ? "Sending…" : sent ? "Sent" : "Send test email"}
             </Button>}
-          </div>
+          </div>}
+          {writingOnly && account.recommendation === "contact" && account.icp_revision === workspace!.approved_icp_revision ? (
+            <Button className="self-start" disabled={dirty || busy} onClick={() => void act(() => writeDraft(account.id))}>Generate outreach revision</Button>
+          ) : null}
         </div>
 
         <aside id="draft-assistant" tabIndex={-1} aria-label="Account details" className="flex scroll-mt-3 h-[min(40rem,85svh)] min-w-0 flex-col overflow-hidden rounded-lg border bg-card lg:sticky lg:top-4 lg:h-[min(46rem,calc(100dvh-12rem))] lg:min-h-72">
@@ -371,6 +375,9 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
 
 function StatusAlert({ draft, dirty, lastEditMessage }: { draft: Draft; dirty: boolean; lastEditMessage?: string }) {
   const r = draft.revision;
+  if (draft.review_status === "writing_only") {
+    return <InlineAlert tone="info" title="Writing only">You can save edits and use the Writing Agent here. Sending requires a qualified Contact and an evidence-backed outreach revision.</InlineAlert>;
+  }
   if (draft.prepared_at) {
     return <InlineAlert tone="info" title={`LinkedIn handoff prepared for revision ${r}`}>The approved message is ready for the controlled test profile. Delivery happens in LinkedIn.</InlineAlert>;
   }

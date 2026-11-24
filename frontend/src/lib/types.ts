@@ -4,7 +4,7 @@
 export type Recommendation = "contact" | "hold" | "reject";
 export type Tier = "A" | "B" | "C";
 export type EnrichmentStatus = "not_started" | "verified" | "uncertain" | "not_found" | "failed";
-export type ReviewStatus = "pending_review" | "approved" | "rejected";
+export type ReviewStatus = "pending_review" | "approved" | "rejected" | "writing_only";
 export type DispatchStatus = "not_sent" | "pending_outcome" | "sent" | "failed";
 export type ExpansionDecision = "accept" | "edit" | "dismiss";
 export type Stage = "matched" | "contacted" | "replied" | "meeting_booked" | "closed_lost";
@@ -113,7 +113,7 @@ export interface Draft {
   test_recipient: string | null;
   evidence_ids: string[];
   role_based: boolean;
-  synthesis_mode: "claude" | "grounded_template";
+  synthesis_mode: "claude" | "grounded_template" | "manual";
   review_status: ReviewStatus;
   dispatch_status: DispatchStatus;
   updated_at: string;

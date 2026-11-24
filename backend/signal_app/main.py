@@ -222,6 +222,10 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     def enrich_account(account_id: str, actor: Actor) -> Workspace:
         return workflow.enrich_account(account_id, actor)
 
+    @app.post('/api/accounts/{account_id}/writing-draft')
+    def create_writing_draft(account_id: str, actor: Actor) -> Workspace:
+        return workflow.create_writing_draft(account_id, actor)
+
     @app.post('/api/accounts/{account_id}/draft')
     def create_draft(account_id: str, actor: Actor) -> Workspace:
         return workflow.create_draft(account_id, actor)

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
+import { AccountDraftAction } from "@/components/account-draft-action";
 import { AppShell } from "@/components/app-shell";
 import { GraphInsights } from "@/components/graph-insights";
 import { EvidenceList, InlineAlert, Panel, PanelHeader, Verdict } from "@/components/signal";
@@ -25,8 +26,8 @@ export default function AccountViewPage() {
 
 function AccountView() {
   const id = useSearchParams().get("id");
-  const { workspace, mode, enrichAccount, writeDraft, pending } = useWorkspace();
-  const [error, setError] = useState<{ detail: ApiError; action: "contact" | "draft" } | null>(null);
+  const { workspace, mode, enrichAccount, pending } = useWorkspace();
+  const [error, setError] = useState<ApiError | null>(null);
   const a = workspace!.accounts.find((x) => x.id === id);
 
   if (!a) {
@@ -42,17 +43,16 @@ function AccountView() {
   }
 
   const enr = enrichmentText(a.enrichment_status, a.contact?.verification_status, a.recommendation);
-  const drafting = pending === `draft-${a.id}`;
   const enriching = pending === `enrich-${a.id}`;
   const canEnrich = mode === "live" && a.recommendation !== "reject" && a.enrichment_status === "not_started"
     && Boolean(a.buyer_role) && a.icp_revision === workspace!.approved_icp_revision;
   const risk = a.negative_signal;
   const riskSource = a.evidence.find((e) => e.id === risk?.evidence_id);
 
-  async function run(action: "contact" | "draft") {
+  async function findContact() {
     setError(null);
-    const res = await (action === "contact" ? enrichAccount : writeDraft)(a!.id);
-    if (!res.ok && res.error) setError({ detail: res.error, action });
+    const result = await enrichAccount(a!.id);
+    if (!result.ok && result.error) setError(result.error);
   }
 
   return (
@@ -68,23 +68,12 @@ function AccountView() {
             {[a.domain, a.geography, a.company_size ? `${a.company_size} employees` : null].filter(Boolean).join(", ")}. Researched {time(a.researched_at)}.
           </p>
         </div>
-        {a.recommendation === "contact" ? (
-          a.draft ? (
-            <Button asChild className="h-10 font-semibold">
-              <Link href={`/outreach/?account=${a.id}`}>Open draft</Link>
-            </Button>
-          ) : (
-            <Button className="h-10 font-semibold" onClick={() => run("draft")} disabled={Boolean(pending)}>
-              {drafting ? <Spinner data-icon="inline-start" /> : null}
-              {drafting ? "Writing draft…" : "Write draft"}
-            </Button>
-          )
-        ) : null}
+        <AccountDraftAction key={a.id} account={a} />
       </div>
 
       {error ? (
-        <InlineAlert tone="danger" title={error.action === "contact" ? "Contact lookup couldn't run" : "The draft wasn't written"} action={<Button variant="outline" size="sm" onClick={() => run(error.action)}>Try again</Button>}>
-          {error.detail.message}
+        <InlineAlert tone="danger" title="Contact lookup couldn't run" action={<Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => void findContact()}>Try again</Button>}>
+          {error.message}
         </InlineAlert>
       ) : null}
 
@@ -120,7 +109,7 @@ function AccountView() {
           <Panel aria-labelledby="contact-title">
             <PanelHeader title="Contact" id="contact-title">
               {canEnrich ? (
-                <Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => run("contact")}>
+                <Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => void findContact()}>
                   {enriching ? <Spinner data-icon="inline-start" /> : null}
                   {enriching ? "Finding contact…" : "Find contact"}
                 </Button>

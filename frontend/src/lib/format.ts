@@ -74,6 +74,7 @@ export function sourceTypeLabel(t: string) {
 }
 
 export function draftStateText(d: Draft) {
+  if (d.review_status === "writing_only") return `Writing only · Revision ${d.revision}`;
   if (d.prepared_at) return `Revision ${d.revision} ready in LinkedIn`;
   if (d.dispatch_status === "sent") return `Revision ${d.revision} sent to the test inbox`;
   if (d.dispatch_status === "pending_outcome") return `Revision ${d.revision} send outcome needs checking`;

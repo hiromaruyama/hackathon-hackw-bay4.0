@@ -66,7 +66,7 @@ interface WorkspaceState {
   discover: (refresh?: boolean, deeperSources?: boolean) => Promise<ActionResult>;
   discoverMore: () => Promise<ActionResult>;
   enrichAccount: (accountId: string) => Promise<ActionResult>;
-  writeDraft: (accountId: string) => Promise<ActionResult>;
+  writeDraft: (accountId: string, writingOnly?: boolean) => Promise<ActionResult>;
   writeSequence: (accountId: string) => Promise<ActionResult>;
   saveDraft: (draftId: string, expected: number, subject: string, body: string) => Promise<ActionResult>;
   review: (draftId: string, revision: number, decision: "approve" | "reject") => Promise<ActionResult>;
@@ -184,7 +184,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         ),
       discoverMore: () => run("discover-more", () => api.discoverMore(workspace?.approved_icp_revision ?? 0), (w) => w, "Search complete"),
       enrichAccount: (accountId) => run(`enrich-${accountId}`, () => api.enrichAccount(accountId), (w) => w),
-      writeDraft: (accountId) => run(`draft-${accountId}`, () => api.draft(accountId), (w) => simulate.draft(w, accountId), "Draft written"),
+      writeDraft: (accountId, writingOnly = false) => run(`draft-${accountId}`, () => api.draft(accountId, writingOnly), (w) => simulate.draft(w, accountId, writingOnly), "Draft saved"),
       writeSequence: (accountId) => run("sequence", () => api.sequence(accountId), (w) => w, "Follow-up drafts saved"),
       saveDraft: (draftId, expected, subject, body) =>
         run("draft-save", () => api.saveDraft(draftId, expected, subject, body), (w) => simulate.saveDraft(w, draftId, expected, subject, body), `Saved as revision ${expected + 1}`),

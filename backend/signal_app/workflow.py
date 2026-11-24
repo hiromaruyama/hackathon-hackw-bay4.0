@@ -77,6 +77,8 @@ def validate_copy(subject: str, body: str) -> None:
 
 
 def validate_account_evidence(account: Account, version: DraftRevision) -> None:
+    if version.synthesis_mode == 'manual':
+        raise SignalError('writing_only_draft', 'This draft is for writing only.')
     if account.recommendation != 'contact' or not account.signal or account.signal.evidence_id not in version.evidence_ids or not set(version.evidence_ids) <= {
         item.id for item in account.evidence
     }:
@@ -111,7 +113,7 @@ class Workflow:
                 draft = drafts_by_account.get(lead.account_id)
                 if account := accounts_by_id.get(lead.account_id):
                     lead = lead.model_copy(update={'industry': lead.industry or account.industry, 'tier': lead.tier or account.tier})
-                if lead.stage == 'matched' and draft:
+                if lead.stage == 'matched' and draft and draft.review_status != 'writing_only':
                     if draft.dispatch_status == 'pending_outcome':
                         action = 'Verify the pending send outcome in the controlled inbox'
                     elif draft.dispatch_status == 'failed':
@@ -708,6 +710,24 @@ class Workflow:
 
         self.store.write(save_usage)
 
+    def create_writing_draft(self, account_id: str, actor: str) -> Workspace:
+        def create(graph: GraphTransaction, state: State) -> None:
+            account = get_account(state, account_id)
+            icp_current(state, account.icp_revision)
+            key = draft_id(account)
+            if graph.draft(key, lock=True):
+                return
+            version = DraftRevision(
+                revision=1, subject='', body='', test_recipient=None, evidence_ids=[],
+                role_based=False, synthesis_mode='manual', actor=actor, at=utcnow(),
+            )
+            graph.save_draft(Draft(id=key, account_id=account_id, icp_revision=account.icp_revision, revisions=[version]))
+            add_activity(state, 'draft_created', actor, 'A writing-only draft was created.',
+                         account_id=account_id, draft_id=key, revision=1)
+
+        self.store.write(create)
+        return self.workspace()
+
     def create_draft(self, account_id: str, actor: str) -> Workspace:
         with self._draft_generation_lock:
             product, account, evidence_id, existing = self.store.read(lambda g, s: self._draft_inputs(g, s, account_id))
@@ -811,6 +831,11 @@ class Workflow:
             require_open_draft(draft)
             revision = draft.current.revision + 1
             recipient = self.settings.linkedin_test_profile_url if draft.current.channel == 'linkedin' else self.settings.test_recipient
+            manual = draft.current.synthesis_mode == 'manual'
+            if manual:
+                recipient = None
+            elif not request.subject or not request.body:
+                raise SignalError('validation_error', 'Enter a subject and body for the outreach draft.', 422)
             if draft.current.channel == 'linkedin' and len(request.body) > 450:
                 raise SignalError('linkedin_message_too_long', 'Keep this LinkedIn message to 450 characters.', 422)
             draft.revisions.append(draft.current.model_copy(update={
@@ -819,7 +844,7 @@ class Workflow:
             }))
             draft.scheduled_at = None
             graph.save_draft(draft)
-            add_activity(state, 'draft_edited', actor, 'A new draft revision requires fresh approval.',
+            add_activity(state, 'draft_edited', actor, 'Writing changes saved.' if manual else 'A new draft revision requires fresh approval.',
                          account_id=draft.account_id, draft_id=key, revision=revision)
 
         self.store.write(edit)
@@ -844,6 +869,8 @@ class Workflow:
             if request.decision == 'approve':
                 validate_account_evidence(get_account(state, draft.account_id), draft.current)
                 validate_copy(draft.current.subject, draft.current.body)
+            if draft.current.synthesis_mode == 'manual':
+                raise SignalError('writing_only_draft', 'This draft is for writing only.')
             entry = DraftReview(
                 revision=request.revision, decision=request.decision, actor=actor, at=utcnow(),
                 approved_snapshot=draft.current if request.decision == 'approve' else None,

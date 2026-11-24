@@ -48,7 +48,7 @@ export const api = {
     request<Workspace>("POST", "/api/discover", { revision, refresh, deeper_sources }),
   discoverMore: (revision: number) => request<Workspace>("POST", "/api/discover/more", { revision }),
   enrichAccount: (accountId: string) => request<Workspace>("POST", `/api/accounts/${encodeURIComponent(accountId)}/enrich`),
-  draft: (accountId: string) => request<Workspace>("POST", `/api/accounts/${encodeURIComponent(accountId)}/draft`),
+  draft: (accountId: string, writingOnly: boolean) => request<Workspace>("POST", `/api/accounts/${encodeURIComponent(accountId)}/${writingOnly ? "writing-draft" : "draft"}`),
   graphInsights: (accountId: string) => request<GraphInsight[]>("GET", `/api/accounts/${encodeURIComponent(accountId)}/insights`),
   sequence: (accountId: string) => request<Workspace>("POST", `/api/accounts/${encodeURIComponent(accountId)}/sequence`),
   saveDraft: (draftId: string, expected_revision: number, subject: string, body: string) =>

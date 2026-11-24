@@ -12,7 +12,7 @@ TextList = Annotated[list[ShortText], Field(max_length=12)]
 Revision = Annotated[int, Field(strict=True, ge=1)]
 Score = Annotated[int, Field(ge=0, le=100)]
 Confidence = Annotated[float, Field(ge=0, le=1)]
-DraftStatus = Literal['pending_review', 'approved', 'rejected']
+DraftStatus = Literal['pending_review', 'approved', 'rejected', 'writing_only']
 DispatchStatus = Literal['not_sent', 'pending_outcome', 'sent', 'failed']
 EnrichmentStatus = Literal['not_started', 'verified', 'uncertain', 'not_found', 'failed']
 PipelineStage = Literal['matched', 'contacted', 'replied', 'meeting_booked', 'closed_lost']
@@ -20,7 +20,7 @@ PipelineOutcome = Literal['won', 'lost']
 PipelineAction = Literal['send', 'reply', 'bounce', 'meeting', 'close']
 PipelineSource = Literal['gmail', 'rep']
 SignalKind = Literal['direct', 'indirect', 'weak']
-SynthesisMode = Literal['claude', 'grounded_template']
+SynthesisMode = Literal['claude', 'grounded_template', 'manual']
 OutreachChannel = Literal['email', 'linkedin']
 MessageVariant = Literal['A', 'B']
 UsageOperation = Literal['leads_enriched', 'graph_query_evaluated', 'outreach_sent']
@@ -171,8 +171,8 @@ class MoreDiscoveryInput(RevisionInput):
 
 class EditDraft(InputModel):
     expected_revision: Revision
-    subject: ShortText
-    body: Description
+    subject: Annotated[str, StringConstraints(strip_whitespace=True, max_length=250)]
+    body: Annotated[str, StringConstraints(strip_whitespace=True, max_length=4000)]
 
 
 class ReviewDraft(RevisionInput):
@@ -461,6 +461,8 @@ class Draft(BaseModel):
     def view(self) -> DraftView:
         review = self.review
         review_status = 'approved' if review and review.decision == 'approve' else 'rejected' if review else 'pending_review'
+        if self.current.synthesis_mode == 'manual':
+            review_status = 'writing_only'
         return DraftView(
             id=self.id, account_id=self.account_id, revision=self.current.revision,
             subject=self.current.subject, body=self.current.body, test_recipient=self.current.test_recipient,

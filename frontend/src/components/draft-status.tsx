@@ -7,6 +7,7 @@ const success = "bg-success-bg text-success-ink";
 const danger = "bg-danger-bg text-danger-ink";
 
 export const draftStatuses = {
+  writing_only: { label: "Writing only", tone: "bg-muted text-muted-foreground" },
   review: { label: "Needs review", tone: attention },
   checking: { label: "Check send outcome", tone: attention },
   failed: { label: "Send failed", tone: danger },

@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowUpRight, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { InlineAlert, Verdict } from "@/components/signal";
+import { AccountDraftAction } from "@/components/account-draft-action";
 import { DraftStatus } from "@/components/draft-status";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
@@ -54,11 +55,7 @@ export function DraftDirectory({ accounts, missingDraft, gmailFeedback }: {
                   </div>
                   <div className="flex flex-col items-start gap-1 text-sm"><span className="text-xs text-muted-foreground md:sr-only">Verdict</span><Verdict value={account.recommendation} /></div>
                   <div className="flex flex-col items-start gap-1"><span className="text-xs text-muted-foreground md:sr-only">Draft status</span><DraftStatus draft={account.draft} /></div>
-                  <Button variant={account.draft ? "outline" : "ghost"} size="sm" className="col-span-2 justify-self-start md:col-span-1 md:justify-self-end" asChild>
-                    <Link href={account.draft ? `/outreach/?account=${id}` : `/accounts/view/?id=${id}`}>
-                      {account.draft ? "Open Draft" : "View account"}<ArrowUpRight data-icon="inline-end" aria-hidden />
-                    </Link>
-                  </Button>
+                  <AccountDraftAction account={account} compact className="col-span-2 justify-self-start md:col-span-1 md:justify-self-end" />
                 </li>
               );
             })}

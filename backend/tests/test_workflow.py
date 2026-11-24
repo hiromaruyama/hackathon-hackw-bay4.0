@@ -737,6 +737,57 @@ def test_hunter_lookup_on_hold_observes_credits_and_preserves_qualification(syst
     assert providers.sent == []
 
 
+@pytest.mark.parametrize('verdict', ['hold', 'reject'])
+def test_writing_only_draft_lifecycle(system, verdict):
+    client, providers = system
+    post(client, '/api/accounts/unknown/writing-draft', expected=401)
+    state = discover_accounts(client)
+    account_id = next(a['id'] for a in state['accounts'] if a['recommendation'] == 'contact')
+    route = f'/api/accounts/{account_id}'
+
+    def set_verdict(graph, state, value):
+        next(a for a in state.accounts if a.id == account_id).recommendation = value
+
+    providers.store.write(lambda graph, state: set_verdict(graph, state, verdict))
+    before = client.get('/api/workspace').json()
+
+    def read_draft(workspace):
+        return next(a['draft'] for a in workspace['accounts'] if a['id'] == account_id)
+
+    with ThreadPoolExecutor(2) as pool:
+        results = list(pool.map(lambda _: post(client, route + '/writing-draft'), range(2)))
+    draft = read_draft(results[0])
+    assert draft == read_draft(results[1])
+    assert draft['review_status'] == 'writing_only' and draft['synthesis_mode'] == 'manual'
+    assert (draft['revision'], draft['subject'], draft['body'], draft['test_recipient']) == (1, '', '', None)
+    assert results[-1]['pipeline'] == before['pipeline']
+    assert sum(e['type'] == 'draft_created' and e['draft_id'] == draft['id'] for e in results[-1]['activity']) == 1
+
+    path = f"/api/drafts/{draft['id']}"
+    edit = {'expected_revision': 1, 'body': 'An opening paragraph.', 'subject': ''}
+    updated = client.patch(path, json=edit, headers=HEADERS)
+    assert updated.status_code == 200, updated.json()
+    saved = read_draft(post(client, route + '/writing-draft'))
+    assert (saved['revision'], saved['body'], saved['test_recipient']) == (2, edit['body'], None)
+    assert client.patch(path, json=edit, headers=HEADERS).status_code == 409
+    for decision in ('approve', 'reject'):
+        assert post(client, path + '/review', {'decision': decision, 'revision': 2}, 409)['error']['code'] == 'writing_only_draft'
+    for action in ('send', 'linkedin-handoff', 'schedule'):
+        payload = {'revision': 2, 'scheduled_at': None} if action == 'schedule' else {'revision': 2}
+        assert post(client, path + '/' + action, payload, 409)['error']['code'] == 'approval_required'
+    assert post(client, route + '/sequence', expected=409)['error']['code'] == 'writing_only_draft'
+    assert post(client, route + '/draft', expected=409)['error']['code'] == 'account_not_qualified'
+    assert client.get('/api/workspace').json()['pipeline'] == before['pipeline']
+    assert providers.lookups == providers.graph_evidence_used == providers.sent == providers.meters == []
+
+    providers.store.write(lambda graph, state: set_verdict(graph, state, 'contact'))
+    generated = get_draft(client, account_id)
+    assert generated['id'] == draft['id'] and generated['revision'] == 3
+    assert generated['review_status'] == 'pending_review' and generated['evidence_ids']
+    assert read_draft(post(client, route + '/writing-draft')) == generated
+    assert client.patch(path, json={**edit, 'expected_revision': 3}, headers=HEADERS).status_code == 422
+
+
 def test_refresh_preserves_saved_accounts_missing_from_new_results(system):
     client, providers = system
     original = discover_accounts(client)
