@@ -8,7 +8,7 @@ import {
   useConversationMode,
   useConversationStatus,
 } from "@elevenlabs/react";
-import { ArrowUp, ArrowUpRight, AudioLines, MessageCircle, Mic, PhoneOff, Square } from "lucide-react";
+import { ArrowUp, ArrowUpRight, MessageCircle, Mic, Phone, PhoneOff, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -50,14 +50,18 @@ export function VoiceAssistant() {
             <SheetDescription>Ask about accounts, evidence, and pipeline activity.</SheetDescription>
           </SheetHeader>
           {/* Mounted only while open, so closing the sheet ends the session and releases the mic. */}
-          {open ? (
-            <ConversationProvider>
-              <AssistantPanel />
-            </ConversationProvider>
-          ) : null}
+          {open ? <SignalAssistantChat /> : null}
         </SheetContent>
       </Sheet>
     </>
+  );
+}
+
+export function SignalAssistantChat() {
+  return (
+    <ConversationProvider>
+      <AssistantPanel />
+    </ConversationProvider>
   );
 }
 
@@ -179,9 +183,9 @@ function AssistantPanel() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-5">
+      <div className="flex min-h-0 flex-1 flex-col items-center gap-3 overflow-y-auto px-5 py-5">
         {lines.length === 0 && !connected ? (
-          <section aria-label="Suggested prompts" className="my-auto flex flex-col gap-3 py-4">
+          <section aria-label="Suggested prompts" className="mt-auto flex w-full max-w-3xl flex-col gap-3 pb-1">
             <h3 className="text-xl font-semibold tracking-tight">Explore your workspace</h3>
             <ul className="grid gap-2">
               {STARTER_PROMPTS.map((prompt) => (
@@ -203,7 +207,7 @@ function AssistantPanel() {
             </ul>
           </section>
         ) : null}
-        <div role="log" aria-label="Assistant conversation" className="flex flex-col gap-4">
+        <div role="log" aria-label="Assistant conversation" className="flex w-full max-w-3xl flex-col gap-4">
           {lines.map((line) => (
             <div key={line.id} className={cn("flex max-w-[94%] flex-col gap-1", line.role === "user" && "self-end")}>
               <span className="text-xs font-medium text-muted-foreground">{line.role === "user" ? "You" : "Signal"}</span>
@@ -217,8 +221,12 @@ function AssistantPanel() {
       </div>
 
       <div className="flex shrink-0 flex-col gap-2 border-t bg-background px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5">
-        {error ? <InlineAlert tone="danger" title={error.title}>{error.message}</InlineAlert> : null}
-        <form className="rounded-2xl border border-input bg-card p-1.5 shadow-sm focus-within:border-ring" onSubmit={send}>
+        {error ? (
+          <div className="mx-auto w-full max-w-3xl">
+            <InlineAlert tone="danger" title={error.title}>{error.message}</InlineAlert>
+          </div>
+        ) : null}
+        <form className="mx-auto w-full max-w-3xl rounded-2xl border border-input bg-card p-1.5 shadow-sm focus-within:border-ring" onSubmit={send}>
           <Textarea
             ref={composerRef}
             value={text}
@@ -230,7 +238,7 @@ function AssistantPanel() {
               }
             }}
             rows={1}
-            placeholder="Ask Signal a question"
+            placeholder="Message Signal Assistant"
             aria-label="Message Signal Assistant"
             maxLength={MESSAGE_LIMIT}
             className="max-h-36 min-h-10 resize-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
@@ -263,7 +271,7 @@ function AssistantPanel() {
                 disabled={busy}
                 onClick={() => connected ? endSession() : void startVoice()}
               >
-                {connectingVoice ? <Spinner /> : connected ? <PhoneOff aria-hidden /> : <AudioLines aria-hidden />}
+                {connectingVoice ? <Spinner /> : connected ? <PhoneOff aria-hidden /> : <Phone aria-hidden />}
               </Button>
               <Button type="submit" size="icon" className="size-9 rounded-full" aria-label="Send message to assistant" disabled={!text.trim() || busy}>
                 <ArrowUp aria-hidden />
