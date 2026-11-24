@@ -8,20 +8,29 @@ import {
   useConversationMode,
   useConversationStatus,
 } from "@elevenlabs/react";
-import { MessageCircle, Mic, PhoneOff, Send } from "lucide-react";
+import { ArrowUp, ArrowUpRight, AudioLines, MessageCircle, Mic, PhoneOff, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { InlineAlert } from "@/components/signal";
 import { api, ApiError } from "@/lib/api";
 import type { IntakeMessage, Workspace } from "@/lib/types";
+import { useBrowserDictation } from "@/lib/use-browser-dictation";
+import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
 
 // Signal Assistant reads workspace data. Voice sessions use a private ElevenLabs agent
 // and a short-lived signed URL from the authenticated backend.
 
 type Line = { id: number; role: "user" | "agent"; text: string };
+
+const MESSAGE_LIMIT = 500;
+const STARTER_PROMPTS = [
+  "Which accounts should I prioritize and why?",
+  "What evidence backs my outreach drafts?",
+  "Where does my pipeline stand?",
+];
 
 export function VoiceAssistant() {
   const [open, setOpen] = useState(false);
@@ -35,10 +44,10 @@ export function VoiceAssistant() {
         <MessageCircle aria-hidden /> Ask Signal
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
-          <SheetHeader className="border-b px-5 py-4">
+        <SheetContent side="right" className="flex h-dvh w-full flex-col gap-0 p-0 sm:max-w-lg">
+          <SheetHeader className="shrink-0 border-b px-5 py-4 pr-12">
             <SheetTitle>Signal Assistant</SheetTitle>
-            <SheetDescription>Ask a question about your workspace. You can type or use the microphone.</SheetDescription>
+            <SheetDescription>Ask about accounts, evidence, and pipeline activity.</SheetDescription>
           </SheetHeader>
           {/* Mounted only while open, so closing the sheet ends the session and releases the mic. */}
           {open ? (
@@ -64,10 +73,20 @@ function AssistantPanel() {
   const [error, setError] = useState<{ title: string; message: string } | null>(null);
   const nextId = useRef(1);
   const endRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const voiceStart = useRef<symbol | null>(null);
 
   // The handler reads the latest workspace on every call.
   useConversationClientTool("get_workspace_summary", () => JSON.stringify(summarize(workspace)));
+
+  const { status: dictation, toggle: toggleDictation } = useBrowserDictation(
+    (transcript) => {
+      setText((current) => [current.trimEnd(), transcript].filter(Boolean).join(" ").slice(0, MESSAGE_LIMIT));
+      composerRef.current?.focus();
+    },
+    (message) => setError({ title: "Dictation unavailable", message }),
+  );
+
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
@@ -80,6 +99,14 @@ function AssistantPanel() {
 
   const connected = status === "connected";
   const connectingVoice = startingVoice || status === "connecting";
+  const dictating = dictation !== "idle";
+  const busy = sending || connectingVoice || dictating;
+  const composerStatus = dictation === "starting" ? "Starting microphone…"
+    : dictation === "listening" ? "Listening for dictation…"
+    : dictation === "finishing" ? "Finishing dictation…"
+    : connectingVoice ? "Connecting voice…"
+    : connected ? (isSpeaking ? "Signal is speaking…" : "Voice is listening…")
+    : sending ? "Signal is replying…" : "";
 
   function appendLines(...messages: Omit<Line, "id">[]) {
     const added = messages.map((message) => ({ ...message, id: nextId.current++ }));
@@ -121,7 +148,7 @@ function AssistantPanel() {
     event.preventDefault();
     const draft = text;
     const message = draft.trim();
-    if (!message || sending || connectingVoice) return;
+    if (!message || busy) return;
     setError(null);
 
     if (connected) {
@@ -152,44 +179,98 @@ function AssistantPanel() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4" aria-live="polite">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-5">
         {lines.length === 0 && !connected ? (
-          <p className="text-sm text-muted-foreground">
-            Ask why an account is a Contact, what evidence backs the draft, or where the pipeline stands.
-          </p>
+          <section aria-label="Suggested prompts" className="my-auto flex flex-col gap-3 py-4">
+            <h3 className="text-xl font-semibold tracking-tight">Explore your workspace</h3>
+            <ul className="grid gap-2">
+              {STARTER_PROMPTS.map((prompt) => (
+                <li key={prompt}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 rounded-lg border bg-card px-3.5 py-3 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => {
+                      setText(prompt);
+                      composerRef.current?.focus();
+                    }}
+                  >
+                    {prompt}
+                    <ArrowUpRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : null}
-        {lines.map((line) => (
-          <div key={line.id} className="flex flex-col gap-1">
-            <span className="text-[13px] text-muted-foreground">{line.role === "user" ? "You" : "Signal"}</span>
-            <p className={line.role === "user" ? "rounded-md bg-muted px-3 py-2 break-words" : "break-words"}>{line.text}</p>
-          </div>
-        ))}
-        {error ? <InlineAlert tone="danger" title={error.title}>{error.message}</InlineAlert> : null}
-        <div ref={endRef} />
+        <div role="log" aria-label="Assistant conversation" className="flex flex-col gap-4">
+          {lines.map((line) => (
+            <div key={line.id} className={cn("flex max-w-[94%] flex-col gap-1", line.role === "user" && "self-end")}>
+              <span className="text-xs font-medium text-muted-foreground">{line.role === "user" ? "You" : "Signal"}</span>
+              <p className={cn("whitespace-pre-wrap wrap-anywhere text-sm leading-relaxed", line.role === "user" && "rounded-lg bg-muted px-3 py-2")}>
+                {line.text}
+              </p>
+            </div>
+          ))}
+          <div ref={endRef} />
+        </div>
       </div>
 
-      <div className="flex shrink-0 flex-col gap-2 border-t bg-card px-5 pt-3 pb-4">
-        <div className="flex items-center justify-between text-[13px] text-muted-foreground">
-          <span role="status">
-            {connected ? (isSpeaking ? "Signal is speaking…" : "Listening…") : connectingVoice ? "Connecting voice…" : sending ? "Replying…" : "Text chat"}
-          </span>
-          {connected ? (
-            <Button variant="outline" size="sm" onClick={() => endSession()}>
-              <PhoneOff aria-hidden /> End
-            </Button>
-          ) : (
-            <Button variant="outline" size="sm" disabled={connectingVoice || sending} onClick={() => void startVoice()}>
-              {connectingVoice ? <Spinner /> : <Mic aria-hidden />} Talk
-            </Button>
-          )}
-        </div>
-        <form className="flex gap-2" onSubmit={send}>
-          <Input className="min-w-0" value={text} onChange={(e) => setText(e.target.value)} placeholder="Type a message" aria-label="Message Signal Assistant" maxLength={500} />
-          <Button type="submit" size="icon" aria-label="Send message to assistant" disabled={!text.trim() || connectingVoice || sending}>
-            <Send aria-hidden />
-          </Button>
+      <div className="flex shrink-0 flex-col gap-2 border-t bg-background px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5">
+        {error ? <InlineAlert tone="danger" title={error.title}>{error.message}</InlineAlert> : null}
+        <form className="rounded-2xl border border-input bg-card p-1.5 shadow-sm focus-within:border-ring" onSubmit={send}>
+          <Textarea
+            ref={composerRef}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+            rows={1}
+            placeholder="Ask Signal a question"
+            aria-label="Message Signal Assistant"
+            maxLength={MESSAGE_LIMIT}
+            className="max-h-36 min-h-10 resize-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
+          />
+          <div className="flex items-center justify-between gap-2 px-0.5 pb-0.5">
+            <span role="status" className="min-w-0 px-1.5 text-xs text-muted-foreground">{composerStatus}</span>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn("size-9 rounded-full", dictating && "bg-accent text-accent-foreground")}
+                aria-label={dictating ? "Stop dictation" : "Dictate message"}
+                title={dictating ? "Stop dictation" : "Dictate with your browser's speech service"}
+                disabled={connected || connectingVoice || sending || dictation === "finishing"}
+                onClick={() => {
+                  setError(null);
+                  toggleDictation();
+                }}
+              >
+                {dictating ? <Square aria-hidden className="size-3.5 fill-current" /> : <Mic aria-hidden />}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-9 rounded-full"
+                aria-label={connected ? "End live voice chat" : "Start live voice chat"}
+                title={connected ? "End live voice chat" : "Start live voice through ElevenLabs"}
+                disabled={busy}
+                onClick={() => connected ? endSession() : void startVoice()}
+              >
+                {connectingVoice ? <Spinner /> : connected ? <PhoneOff aria-hidden /> : <AudioLines aria-hidden />}
+              </Button>
+              <Button type="submit" size="icon" className="size-9 rounded-full" aria-label="Send message to assistant" disabled={!text.trim() || busy}>
+                <ArrowUp aria-hidden />
+              </Button>
+            </div>
+          </div>
         </form>
-        <p className="text-xs text-muted-foreground">Voice audio is processed by ElevenLabs.</p>
       </div>
     </div>
   );
