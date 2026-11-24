@@ -11,7 +11,7 @@ import {
 import { ArrowUp, ArrowUpRight, AudioLines, MessageCircle, Mic, PhoneOff, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { InlineAlert } from "@/components/signal";
 import { api, ApiError } from "@/lib/api";
@@ -35,33 +35,32 @@ const STARTER_PROMPTS = [
 export function VoiceAssistant() {
   const [open, setOpen] = useState(false);
   return (
-    <>
-      <Button
-        onClick={() => setOpen(true)}
-        className="fixed right-4 bottom-4 z-40 h-11 gap-2 rounded-full px-4 shadow-lg"
-        aria-label="Open Signal Assistant"
-      >
-        <MessageCircle aria-hidden /> Ask Signal
-      </Button>
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="right" className="flex h-dvh w-full flex-col gap-0 p-0 sm:max-w-lg">
-          <SheetHeader className="shrink-0 border-b px-5 py-4 pr-12">
-            <SheetTitle>Signal Assistant</SheetTitle>
-            <SheetDescription>Ask about accounts, evidence, and pipeline activity.</SheetDescription>
-          </SheetHeader>
-          {/* Mounted only while open, so closing the sheet ends the session and releases the mic. */}
-          {open ? (
-            <ConversationProvider>
-              <AssistantPanel />
-            </ConversationProvider>
-          ) : null}
-        </SheetContent>
-      </Sheet>
-    </>
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <Button className="fixed right-4 bottom-4 z-40 h-11 gap-2 rounded-full px-4 shadow-lg" aria-label="Open Signal Assistant">
+          <MessageCircle data-icon="inline-start" aria-hidden /> Ask Signal
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="flex h-dvh w-full flex-col gap-0 p-0 sm:max-w-lg">
+        <SheetHeader className="shrink-0 border-b px-5 py-4 pr-12">
+          <SheetTitle>Signal Assistant</SheetTitle>
+          <SheetDescription>Ask about accounts, evidence, and pipeline activity.</SheetDescription>
+        </SheetHeader>
+        {open ? <AgentChat /> : null}
+      </SheetContent>
+    </Sheet>
   );
 }
 
-function AssistantPanel() {
+export function AgentChat({ fullPage = false }: { fullPage?: boolean }) {
+  return (
+    <ConversationProvider>
+      <AssistantPanel fullPage={fullPage} />
+    </ConversationProvider>
+  );
+}
+
+function AssistantPanel({ fullPage }: { fullPage: boolean }) {
   const { workspace } = useWorkspace();
   const { startSession, endSession, sendUserMessage } = useConversationControls();
   const { status } = useConversationStatus();
@@ -179,10 +178,10 @@ function AssistantPanel() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-5">
+      <div className={cn("flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-5", fullPage ? "px-1" : "px-5")}>
         {lines.length === 0 && !connected ? (
-          <section aria-label="Suggested prompts" className="my-auto flex flex-col gap-3 py-4">
-            <h3 className="text-xl font-semibold tracking-tight">Explore your workspace</h3>
+          <section aria-label="Suggested prompts" className={cn("my-auto flex flex-col gap-3 py-4", fullPage && "mx-auto w-full max-w-lg")}>
+            <h2 className="text-xl font-semibold tracking-tight">Explore your workspace</h2>
             <ul className="grid gap-2">
               {STARTER_PROMPTS.map((prompt) => (
                 <li key={prompt}>
@@ -216,7 +215,10 @@ function AssistantPanel() {
         </div>
       </div>
 
-      <div className="flex shrink-0 flex-col gap-2 border-t bg-background px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5">
+      <div className={cn(
+        "flex shrink-0 flex-col gap-2 bg-background pt-3",
+        fullPage ? "pb-[env(safe-area-inset-bottom)]" : "border-t px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5",
+      )}>
         {error ? <InlineAlert tone="danger" title={error.title}>{error.message}</InlineAlert> : null}
         <form className="rounded-2xl border border-input bg-card p-1.5 shadow-sm focus-within:border-ring" onSubmit={send}>
           <Textarea
