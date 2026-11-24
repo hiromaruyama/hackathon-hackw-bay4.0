@@ -32,7 +32,7 @@ export function Verdict({ value, className }: { value: Recommendation; className
 const toneStyles = {
   warning: { box: "bg-warning-bg border-l-warning text-warning-ink", icon: AlertTriangle, iconClass: "text-warning" },
   danger: { box: "bg-danger-bg border-l-destructive text-danger-ink", icon: XCircle, iconClass: "text-destructive" },
-  success: { box: "bg-success-bg border-l-success text-[#1f5a40]", icon: CheckCircle2, iconClass: "text-success" },
+  success: { box: "bg-success-bg border-l-success text-success-ink", icon: CheckCircle2, iconClass: "text-success" },
   info: { box: "bg-accent border-l-primary text-primary", icon: Info, iconClass: "text-primary" },
   pending: { box: "bg-warning-bg border-l-warning text-warning-ink", icon: Clock, iconClass: "text-warning" },
 };
@@ -83,7 +83,7 @@ export function EvidenceList({ evidence, numbered = true, highlightId }: { evide
               </span>
             </div>
           </div>
-          <blockquote className="border-l-2 pl-2.5 font-serif text-sm text-[#4a4c47]">{e.excerpt}</blockquote>
+          <blockquote className="border-l-2 pl-2.5 font-serif text-sm text-ink-2">{e.excerpt}</blockquote>
         </li>
       ))}
     </ol>
@@ -115,7 +115,7 @@ export function ActivityList({ events, limit }: { events: ActivityEvent[]; limit
   return (
     <ol>
       {list.map((e) => (
-        <li key={e.id} className="grid grid-cols-[72px_minmax(0,1fr)] gap-3 border-b border-[#ececeb] py-2.5 last:border-b-0">
+        <li key={e.id} className="grid grid-cols-[72px_minmax(0,1fr)] gap-3 border-b border-hairline py-2.5 last:border-b-0">
           <span className="pt-px text-[13px] text-muted-foreground tabular-nums">{time(e.at)}</span>
           <span>
             {e.message}

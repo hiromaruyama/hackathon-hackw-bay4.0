@@ -50,7 +50,7 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
                 onClick={() => setFilter(f.id)}
                 className={cn(
                   "h-8 rounded-full border px-3 text-sm",
-                  filter === f.id ? "border-foreground bg-foreground font-semibold text-white" : "border-muted bg-muted hover:border-input",
+                  filter === f.id ? "border-foreground bg-foreground font-semibold text-background" : "border-muted bg-muted hover:border-input",
                 )}
               >
                 {f.label} <span className="tabular-nums">{count(f.id)}</span>
@@ -65,7 +65,7 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
             placeholder="Filter by keyword"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="h-auto border-0 p-0 text-sm text-foreground shadow-none focus-visible:ring-0"
+            className="h-auto border-0 p-0 text-sm text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
           />
         </label>
       </div>
@@ -99,7 +99,7 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
                   <TableCell className="py-3">
                     <span className="flex items-center gap-2.5">
                       <span className={cn("w-6 font-semibold tabular-nums", a.fit_score >= 70 && "text-success")}>{a.fit_score}</span>
-                      <span aria-hidden className="block h-2 w-20 bg-[#ececeb]">
+                      <span aria-hidden className="block h-2 w-20 bg-hairline">
                         <span className="block h-full bg-chart-1" style={{ width: `${a.fit_score}%` }} />
                       </span>
                     </span>

@@ -262,7 +262,7 @@ function Explorer() {
                 const count = nodes.filter((n) => n.type === t.type).length;
                 return (
                   <label key={t.type} className={cn("flex cursor-pointer items-center gap-2 text-sm", count === 0 && "opacity-50")}>
-                    <input type="checkbox" checked={!hidden.has(t.type)} onChange={() => toggle(t.type)} className="size-4 accent-[#2f72b0]" />
+                    <input type="checkbox" checked={!hidden.has(t.type)} onChange={() => toggle(t.type)} className="size-4 accent-primary" />
                     <span aria-hidden className={cn("inline-block size-3", t.type === "company" ? "rounded-[2px]" : t.type === "competitor" ? "rotate-45 rounded-[1px]" : "rounded-full")} style={{ background: t.color }} />
                     {t.label} ({count})
                   </label>
@@ -280,7 +280,7 @@ function Explorer() {
                   if (e.key === "Enter" && matches[0]) setSelected(matches[0].id);
                   if (e.key === "Escape") setQuery("");
                 }}
-                className="h-auto border-0 p-0 text-sm text-foreground shadow-none focus-visible:ring-0"
+                className="h-auto border-0 p-0 text-sm text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
               />
             </label>
           </div>
@@ -298,7 +298,7 @@ function Explorer() {
             >
               <defs>
                 <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M0,0 L10,5 L0,10 z" fill="#9a9b98" />
+                  <path d="M0,0 L10,5 L0,10 z" style={{ fill: "var(--edge)" }} />
                 </marker>
               </defs>
 
@@ -321,13 +321,13 @@ function Explorer() {
                       y1={a.y}
                       x2={ex}
                       y2={ey}
-                      stroke={active ? "#2f312d" : e.rel === "HAS_RISK" ? "#d98b84" : "#a9aaa7"}
+                      style={{ stroke: active ? "var(--foreground)" : e.rel === "HAS_RISK" ? "var(--edge-risk)" : "var(--edge)" }}
                       strokeWidth={active ? 2 : 1.4}
                       strokeDasharray={e.saved ? undefined : "5 4"}
                       markerEnd="url(#arrow)"
                     />
                     {active || (!sel && e.saved) ? (
-                      <text x={(a.x + ex) / 2} y={(a.y + ey) / 2 - 6} textAnchor="middle" fontSize="11" fill="#6e706b" style={{ paintOrder: "stroke", stroke: "#f5f5f5", strokeWidth: 4 }}>
+                      <text x={(a.x + ex) / 2} y={(a.y + ey) / 2 - 6} textAnchor="middle" fontSize="11" style={{ fill: "var(--muted-foreground)", paintOrder: "stroke", stroke: "var(--subtle)", strokeWidth: 4 }}>
                         {e.rel.toLowerCase().replace(/_/g, " ")}
                       </text>
                     ) : null}
@@ -361,8 +361,8 @@ function Explorer() {
                     }}
                   >
                     <title>{`${n.label}${n.score !== undefined ? ` (fit ${n.score})` : ""}`}</title>
-                    <circle className="focus" r={r + 7} fill="none" stroke="#2f72b0" strokeWidth="2" opacity="0" />
-                    {isSel || matchIds.has(n.id) ? <circle r={r + 5} fill="none" stroke={isSel ? "#2f312d" : "#2f72b0"} strokeWidth="2" /> : null}
+                    <circle className="focus" r={r + 7} fill="none" strokeWidth="2" opacity="0" style={{ stroke: "var(--primary)" }} />
+                    {isSel || matchIds.has(n.id) ? <circle r={r + 5} fill="none" strokeWidth="2" style={{ stroke: isSel ? "var(--foreground)" : "var(--primary)" }} /> : null}
                     {n.type === "company" ? (
                       <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={3} fill={fill} />
                     ) : n.type === "competitor" ? (
@@ -383,8 +383,7 @@ function Explorer() {
                         textAnchor={n.type === "signal" || n.type === "person" ? "middle" : "start"}
                         fontSize={n.type === "product" || n.type === "company" ? 15 : 13}
                         fontWeight={n.type === "product" || n.type === "company" ? 600 : 400}
-                        fill="#2f312d"
-                        style={{ paintOrder: "stroke", stroke: "#f5f5f5", strokeWidth: 4 }}
+                        style={{ fill: "var(--foreground)", paintOrder: "stroke", stroke: "var(--subtle)", strokeWidth: 4 }}
                       >
                         {n.label.length > 30 ? `${n.label.slice(0, 29)}…` : n.label}
                       </text>

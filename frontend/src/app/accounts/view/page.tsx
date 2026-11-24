@@ -58,7 +58,7 @@ function AccountView() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
           <h1 className="text-[22px] leading-tight font-bold">{a.name}</h1>
-          <p className="text-[#4a4c47]">
+          <p className="text-ink-2">
             {[a.domain, a.geography, a.company_size ? `${a.company_size} employees` : null].filter(Boolean).join(", ")}. Researched {time(a.researched_at)}.
           </p>
         </div>

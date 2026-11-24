@@ -50,7 +50,7 @@ function Outreach() {
     return (
       <Panel className="flex flex-col items-start gap-2 py-10">
         <h1 className="text-lg font-bold">No draft to review yet</h1>
-        <p className="max-w-[56ch] text-[#4a4c47]">
+        <p className="max-w-[56ch] text-ink-2">
           {contactable ? `Open ${contactable.name} and write a draft. Signal cites a source for every claim about the prospect.` : "Drafts are written for accounts marked Contact. Find accounts first."}
         </p>
         <Button asChild className="mt-2 h-10 font-semibold">
@@ -124,7 +124,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div className="flex flex-col gap-1">
               <h1 className="text-[22px] leading-tight font-bold">{account.name}</h1>
-              <p className="text-[#4a4c47]">
+              <p className="text-ink-2">
                 {account.domain}. <span className={cn("font-semibold", account.recommendation === "contact" ? "text-success" : "text-warning")}>{verdictLabel[account.recommendation]}</span>, fit {account.fit_score}, intent {account.intent_score}.
               </p>
             </div>
@@ -148,13 +148,13 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
             <div className="flex flex-col gap-0.5 border-b px-[18px] py-3.5 sm:border-r sm:border-b-0">
               <span className="text-[13px] text-muted-foreground">Prospect</span>
               <span className="font-semibold">{account.contact?.role ?? account.buyer_role ?? "Role not found"}</span>
-              <span className="text-[#4a4c47]">{account.contact?.email_masked ?? "No address found"}</span>
+              <span className="text-ink-2">{account.contact?.email_masked ?? "No address found"}</span>
               <span className={cn("text-[13px] font-semibold", enr.tone)}>{enr.text}</span>
             </div>
             <div className="flex flex-col gap-0.5 bg-subtle px-[18px] py-3.5">
               <span className="text-[13px] text-muted-foreground">This email actually goes to</span>
               <span className="font-semibold">Controlled test inbox</span>
-              <span className="text-[#4a4c47]">{draft.test_recipient}</span>
+              <span className="text-ink-2">{draft.test_recipient}</span>
               <span className="text-[13px] text-muted-foreground">Set on the server. The prospect never receives it.</span>
             </div>
           </div>
@@ -184,7 +184,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
                 value={subject}
                 disabled={unresolved}
                 onChange={(e) => setSubject(e.target.value)}
-                className="h-auto border-0 p-0 font-serif text-lg font-semibold shadow-none focus-visible:ring-0"
+                className="h-auto border-0 bg-transparent p-0 font-serif text-lg font-semibold shadow-none focus-visible:ring-0 dark:bg-transparent"
               />
             </div>
             <div className="px-5 py-4 md:pl-[92px]">
@@ -195,7 +195,7 @@ function Review({ account, draft, others }: { account: Account; draft: Draft; ot
                 disabled={unresolved}
                 onChange={(e) => setBody(e.target.value)}
                 rows={Math.max(10, body.split("\n").length + 2)}
-                className="max-w-[660px] resize-y border-0 p-0 font-serif text-[17px] leading-[1.65] text-[#2f312d] shadow-none focus-visible:ring-0"
+                className="max-w-[660px] resize-y border-0 bg-transparent p-0 font-serif text-[17px] leading-[1.65] text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
               />
             </div>
             <div className="border-t px-5 py-3 md:pl-[92px]">

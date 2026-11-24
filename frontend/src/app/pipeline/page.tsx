@@ -50,7 +50,7 @@ function PipelineView() {
                       <Link href={`/accounts/view/?id=${l.account_id}`} className="font-semibold text-foreground">
                         {l.company}
                       </Link>
-                      <span className="text-sm text-[#4a4c47]">{l.role ?? "Role unknown"}, fit {l.fit_score}</span>
+                      <span className="text-sm text-ink-2">{l.role ?? "Role unknown"}, fit {l.fit_score}</span>
                       {l.test_send ? <span className="text-[13px] font-semibold text-primary">Test send</span> : null}
                       {l.next_action ? <span className="text-[13px] text-muted-foreground">Next: {l.next_action}</span> : null}
                       <span className="text-[13px] text-muted-foreground">{actorLabel(l.actor)}, {dateTime(l.updated_at)}</span>
@@ -72,7 +72,7 @@ function PipelineView() {
             {p.events.map((e) => {
               const name = p.leads.find((l) => l.account_id === e.account_id)?.company ?? e.account_id;
               return (
-                <li key={e.id} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 border-b border-[#ececeb] py-2.5 last:border-b-0">
+                <li key={e.id} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 border-b border-hairline py-2.5 last:border-b-0">
                   <span className="text-[13px] text-muted-foreground tabular-nums">{dateTime(e.at)}</span>
                   <span>
                     {name} moved {e.from_stage ? `from ${stageLabel[e.from_stage]} ` : ""}to {stageLabel[e.to_stage]}

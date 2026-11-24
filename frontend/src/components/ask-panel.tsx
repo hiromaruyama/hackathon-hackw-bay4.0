@@ -105,7 +105,7 @@ export function AskPanel({ account, onApply }: { account: Account; onApply: (bef
                   <div className="border-b px-3 py-2.5 text-[13px] font-semibold">Suggested edit</div>
                   <div className="flex flex-col gap-1.5 px-3 py-2.5 font-serif text-sm leading-relaxed">
                     <del className="text-destructive">{m.answer.suggested_edit.before}</del>
-                    <ins className="bg-success-bg px-0.5 text-[#1f5a40] no-underline">{m.answer.suggested_edit.after}</ins>
+                    <ins className="bg-success-bg px-0.5 text-success-ink no-underline">{m.answer.suggested_edit.after}</ins>
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-2.5">
                     <span className="text-[13px] text-muted-foreground">Saves a new revision</span>

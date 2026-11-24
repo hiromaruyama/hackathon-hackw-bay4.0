@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { InlineAlert } from "@/components/signal";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { VoiceAssistant } from "@/components/voice-assistant";
 import { useWorkspace } from "@/lib/workspace-context";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,7 @@ export function AppShell({ commands, children }: { commands?: React.ReactNode; c
           <span className="text-sm font-normal text-muted-foreground">/ {productName}</span>
         </Link>
         <div className="ml-auto flex items-center gap-3">
+          <ThemeToggle />
           {mode === "sample" ? (
             <span className="rounded-md border border-dashed border-input px-2 py-0.5 text-xs text-muted-foreground whitespace-nowrap">Sample data</span>
           ) : null}
