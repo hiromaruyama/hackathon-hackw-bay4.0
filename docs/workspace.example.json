@@ -73,7 +73,7 @@
       }
     }
   ],
-  "competitor": {"name": "Example Siting", "positioning": "Site screening for project developers", "differentiator": "Public positioning emphasizes screening workflows", "pricing": null, "evidence": [{"id":"ev-competitor","url":"https://siting.example.com/product","title":"Product overview","excerpt":"Site screening for project developers.","source_type":"company","published_at":null}]},
+  "competitor": {"name": "Example Siting", "positioning": "Site screening for project developers", "differentiator": "Public positioning emphasizes screening workflows", "pricing": null, "plans": [{"name": "Starter", "price": null, "evidence_id": "ev-competitor"}], "evidence": [{"id":"ev-competitor","url":"https://siting.example.com/product","title":"Product overview","excerpt":"Starter screens up to 10 project sites per month.","source_type":"company","published_at":null}]},
   "activity": [{"id": "event-example", "type": "draft_approved", "actor": "demo", "at": "2026-11-24T18:10:00Z", "account_id": "acct-example", "draft_id": "draft-example", "revision": 2, "message": "The current draft revision was approved."}],
   "pipeline": {
     "leads": [{"account_id":"acct-example","company":"Example Energy","role":"Director of Project Development","fit_score":100,"stage":"matched","test_send":false,"actor":"system","updated_at":"2026-11-24T18:03:00Z","next_action":"Send the approved demo email"}],

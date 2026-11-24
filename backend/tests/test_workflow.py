@@ -66,7 +66,8 @@ class SimulatedProviders:
                    'North Storage develops exclusively in Ontario. North Storage plans to hire locally.', self.recent, 'tavily'),
         ]
         self.competitor = Source('siting', 'https://siting.example.com/pricing', 'Siting Tool',
-                                 'Siting Tool provides parcel screening. Its public plan starts at $29 per month.', None, 'tavily')
+                                 'Siting Tool provides parcel screening. Its public plan starts at $29 per month. '
+                                 'Starter covers 10 parcels at $29 per month. Portfolio includes utility screening.', None, 'tavily')
         self.bios = [
             Source('bright-bio', 'https://bright.example.com/team', 'Bright Energy leadership',
                    'Alex Example currently works at Bright Energy and previously worked at Shared Grid. '
@@ -140,7 +141,12 @@ class SimulatedProviders:
                                'positioning_evidence': proof('siting', 'Siting Tool provides parcel screening.'),
                                'differentiator': 'Published starting plan',
                                'differentiation_evidence': proof('siting', 'Its public plan starts at $29 per month.'),
-                               'pricing': '$29/month', 'pricing_evidence': proof('siting', '$29 per month.')},
+                               'pricing': '$29/month', 'pricing_evidence': proof('siting', '$29 per month.'),
+                               'plans': [
+                                   {'name': 'Starter', 'price': '$29 per month', 'evidence': proof('siting', 'Starter covers 10 parcels at $29 per month.')},
+                                   {'name': 'Portfolio', 'price': '$999 per month', 'evidence': proof('siting', 'Portfolio includes utility screening.')},
+                                   {'name': 'Unlimited', 'price': None, 'evidence': proof('siting', 'Portfolio includes utility screening.')},
+                               ]},
             }
             if self.only_hold:
                 results['accounts'] = results['accounts'][-1:]
@@ -403,6 +409,9 @@ def test_real_graph_flow_and_single_send(system):
     state = discover_accounts(client)
     assert len(state['accounts']) == 3
     assert state['competitor']['pricing'] == '$29/month'
+    assert [(plan['name'], plan['price']) for plan in state['competitor']['plans']] == [
+        ('Starter', '$29 per month'), ('Portfolio', None),
+    ]
     assert state['accounts'][-1]['recommendation'] == 'reject'
     assert state['accounts'][-1]['negative_signal']['evidence_id']
     search_count = len(providers.searches)
@@ -452,6 +461,36 @@ def test_real_graph_flow_and_single_send(system):
     assert confirmed['pipeline']['events'][0]['actor'] == 'demo'
     assert confirmed['pipeline']['matched_to_contacted_rate'] == 0.5
     assert client.get('/api/workspace').json()['pipeline'] == confirmed['pipeline']
+
+
+@pytest.mark.parametrize('system', [{'test_send_limit_per_hour': 1}], indirect=True)
+def test_hourly_send_limit_counts_distinct_draft_reservations(system):
+    client, providers = system
+    state = discover_accounts(client)
+    first, second = [get_draft(client, account['id']) for account in state['accounts'] if account['recommendation'] == 'contact']
+    first_path, second_path = [f'/api/drafts/{draft["id"]}' for draft in (first, second)]
+    for path in (first_path, second_path):
+        post(client, path + '/review', {'revision': 1, 'decision': 'approve'})
+
+    providers.resume_send = Event()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            attempt = pool.submit(post, client, first_path + '/send', {'revision': 1})
+            assert providers.send_entered.wait(5)
+            try:
+                duplicate = post(client, first_path + '/send', {'revision': 1})
+                assert duplicate['pipeline']['counts']['contacted'] == 0
+                blocked = post(client, second_path + '/send', {'revision': 1}, 429)
+                assert blocked['error']['code'] == 'send_rate_limit'
+                assert len(providers.sent) == 1
+            finally:
+                providers.resume_send.set()
+            result = attempt.result(timeout=8)
+    finally:
+        providers.resume_send.set()
+
+    assert result['pipeline']['counts']['contacted'] == 1
+    assert next(account for account in result['accounts'] if account['id'] == second['account_id'])['draft']['dispatch_status'] == 'not_sent'
 
 
 @pytest.mark.parametrize('outcome', ['failed', 'pending_outcome'])

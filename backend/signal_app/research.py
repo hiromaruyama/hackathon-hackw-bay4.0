@@ -8,7 +8,7 @@ from pydantic import Field, StringConstraints
 
 from .errors import ProviderError, SignalError
 from .models import (
-    Account, Competitor, Confidence, Description, Evidence, Expansion, Icp, IcpFields,
+    Account, Competitor, CompetitorPlan, Confidence, Description, Evidence, Expansion, Icp, IcpFields,
     InputModel, IntakeChat, IntakeFields, IntakeReply, MarketSignal, NegativeSignal, Product, PublicAffiliation,
     ResearchBatch, ShortText, Signal, SignalKind, Source, SynthesisMode,
 )
@@ -100,6 +100,12 @@ class CandidateOutput(InputModel):
     market_signals: list[MarketSignalOutput] = Field(default_factory=list, max_length=4)
 
 
+class CompetitorPlanOutput(InputModel):
+    name: ShortText
+    price: ShortText | None = None
+    evidence: Quote
+
+
 class CompetitorOutput(InputModel):
     name: str
     category: Literal['direct', 'indirect', 'alternative'] = 'direct'
@@ -109,6 +115,7 @@ class CompetitorOutput(InputModel):
     differentiation_evidence: Quote
     pricing: str | None = None
     pricing_evidence: Quote | None = None
+    plans: list[CompetitorPlanOutput] = Field(default_factory=list, max_length=4)
 
 
 class DiscoveryOutput(InputModel):
@@ -360,10 +367,21 @@ def make_competitor(candidate: CompetitorOutput | None, sources: dict[str, Sourc
     if not positioning or not difference:
         return None
     records = {record.id: record for record in (positioning, difference, pricing) if record}
+    plans = {}
+    for plan in candidate.plans:
+        proof = evidence_for(plan.evidence, sources, now)
+        name = clean_text(plan.name, 100)
+        if not proof or not name or not re.search(rf'(?<!\w){re.escape(name)}(?!\w)', proof.excerpt, re.IGNORECASE):
+            continue
+        price = clean_text(plan.price, 100)
+        if price and not re.search(rf'(?<!\w){re.escape(price)}(?!\w|[.,]\d)', proof.excerpt, re.IGNORECASE):
+            price = ''
+        plans.setdefault(name.casefold(), CompetitorPlan(name=name, price=price or None, evidence_id=proof.id))
+        records[proof.id] = proof
     return Competitor(
         name=clean_text(candidate.name), positioning=clean_text(candidate.positioning),
         differentiator=clean_text(candidate.differentiator), pricing=clean_text(candidate.pricing) if pricing else None,
-        evidence=list(records.values()), category=candidate.category,
+        evidence=list(records.values()), category=candidate.category, plans=list(plans.values()),
     )
 
 
@@ -431,7 +449,9 @@ def analyze_research(providers: Providers, product: Product, icp: Icp, batch: Re
         'Add renewal or churn only when a source explicitly names the vendor and says a contract renews, expires, or is being replaced. '
         'For each evidenced category provide one competitor in competitors. Direct solves the same job with similar software, '
         'indirect solves a broader or adjacent job, and alternative uses a different approach such as a spreadsheet or consultancy. '
-        'Support positioning and differences from the stated product with public evidence. Quote public pricing if found.',
+        'Support positioning and differences from the stated product with public evidence. Quote public pricing if found. '
+        'In plans, include up to four publicly documented tiers or packages. Quote each plan name, its inclusions, and the '
+        'public price from the same source excerpt. Copy the price as printed and leave it empty if it is undisclosed.',
         context(product=public_product(product), approved_icp=icp.fields.model_dump(),
                 prospect_sources=sources_for_prompt(batch.prospects), competitor_sources=sources_for_prompt(batch.competitors)),
         max_tokens=4600,

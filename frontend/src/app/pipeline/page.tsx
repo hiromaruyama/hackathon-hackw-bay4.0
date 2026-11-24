@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { actorLabel, dateTime, percent, stageLabel, stages } from "@/lib/format";
-import type { Lead, Pipeline, PipelineChange, Stage } from "@/lib/types";
+import type { Lead, Pipeline, PipelineChange, PipelineEvent, Stage } from "@/lib/types";
 import { useWorkspace } from "@/lib/workspace-context";
 
 export default function PipelinePage() {
@@ -32,6 +32,20 @@ const moveActions: Partial<Record<Stage, Move[]>> = {
   meeting_booked: [{ to_stage: "closed_lost", outcome: "won", label: "Close as won" }, { to_stage: "closed_lost", outcome: "lost", label: "Close as lost" }],
 };
 
+function stageAttribution(actor: string, event?: PipelineEvent) {
+  if (event?.source === "gmail" || event?.test_send) {
+    return {
+      source: "Gmail automation",
+      detail: (event.action === "send" || event.test_send) && actor !== "system"
+        ? `Requested by ${actorLabel(actor)}` : null,
+    };
+  }
+  if (event?.source === "rep" || actor !== "system") {
+    return { source: "Rep action", detail: actorLabel(actor) };
+  }
+  return { source: "Signal automation", detail: null };
+}
+
 function PipelineView() {
   const { workspace, mode, moveLead, syncFeedback, pending } = useWorkspace();
   const p = workspace!.pipeline;
@@ -40,6 +54,7 @@ function PipelineView() {
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const latestEvent = new Map(p.events.map((event) => [event.account_id, event]));
 
   function choose(lead: Lead, move: Move) {
     setError(null);
@@ -108,32 +123,36 @@ function PipelineView() {
                 {leads.length === 0 ? (
                   <p className="py-4 text-sm text-muted-foreground">No leads</p>
                 ) : (
-                  leads.map((l) => (
-                    <article key={l.account_id} className="flex flex-col gap-1 rounded-md border bg-card p-3"
-                      draggable={mode === "live" && Boolean(moveActions[l.stage]) && pending === null}
-                      onDragStart={(event) => {
-                        event.dataTransfer.setData("text/plain", l.company);
-                        setDragging(l);
-                      }}
-                      onDragEnd={() => setDragging(null)}>
-                      <Link href={`/accounts/view/?id=${l.account_id}`} className="font-semibold text-foreground">
-                        {l.company}
-                      </Link>
-                      <span className="text-sm text-ink-2">{l.role ?? "Role unknown"}, fit {l.fit_score}</span>
-                      <div className="flex flex-wrap gap-1">
-                        {l.test_send ? <Badge variant="secondary">Test send</Badge> : null}
-                        {l.bounced ? <Badge variant="destructive">Bounced</Badge> : null}
-                        {l.outcome ? <Badge variant="outline">{l.outcome === "won" ? "Won" : "Lost"}</Badge> : null}
-                      </div>
-                      {l.next_action ? <span className="text-[13px] text-muted-foreground">Next: {l.next_action}</span> : null}
-                      <span className="text-[13px] text-muted-foreground">{actorLabel(l.actor)}, {dateTime(l.updated_at)}</span>
-                      {mode === "live" ? (moveActions[l.stage] ?? []).map((move) => (
-                        <Button key={move.label} variant="outline" size="sm" className="mt-1 self-start" onClick={() => choose(l, move)} disabled={pending !== null}>
-                          {move.label}
-                        </Button>
-                      )) : null}
-                    </article>
-                  ))
+                  leads.map((l) => {
+                    const attribution = stageAttribution(l.actor, latestEvent.get(l.account_id));
+                    return (
+                      <article key={l.account_id} className="flex flex-col gap-1 rounded-md border bg-card p-3"
+                        draggable={mode === "live" && Boolean(moveActions[l.stage]) && pending === null}
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData("text/plain", l.company);
+                          setDragging(l);
+                        }}
+                        onDragEnd={() => setDragging(null)}>
+                        <Link href={`/accounts/view/?id=${l.account_id}`} className="font-semibold text-foreground">
+                          {l.company}
+                        </Link>
+                        <span className="text-sm text-ink-2">{l.role ?? "Role unknown"}, fit {l.fit_score}</span>
+                        <div className="flex flex-wrap gap-1">
+                          <Badge variant="outline">{attribution.source}</Badge>
+                          {l.test_send ? <Badge variant="secondary">Test send</Badge> : null}
+                          {l.bounced ? <Badge variant="destructive">Bounced</Badge> : null}
+                          {l.outcome ? <Badge variant="outline">{l.outcome === "won" ? "Won" : "Lost"}</Badge> : null}
+                        </div>
+                        {l.next_action ? <span className="text-[13px] text-muted-foreground">Next: {l.next_action}</span> : null}
+                        <span className="text-[13px] text-muted-foreground">{[attribution.detail, dateTime(l.updated_at)].filter(Boolean).join(" · ")}</span>
+                        {mode === "live" ? (moveActions[l.stage] ?? []).map((move) => (
+                          <Button key={move.label} variant="outline" size="sm" className="mt-1 self-start" onClick={() => choose(l, move)} disabled={pending !== null}>
+                            {move.label}
+                          </Button>
+                        )) : null}
+                      </article>
+                    );
+                  })
                 )}
               </li>
             );
@@ -149,6 +168,7 @@ function PipelineView() {
           <ol>
             {p.events.slice().reverse().map((e) => {
               const name = p.leads.find((l) => l.account_id === e.account_id)?.company ?? e.account_id;
+              const attribution = stageAttribution(e.actor, e);
               return (
                 <li key={e.id} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 border-b border-hairline py-2.5 last:border-b-0">
                   <span className="text-[13px] text-muted-foreground tabular-nums">{dateTime(e.at)}</span>
@@ -157,7 +177,11 @@ function PipelineView() {
                       : e.from_stage === e.to_stage ? `${name} stayed at ${stageLabel[e.to_stage]}`
                         : `${name} moved ${e.from_stage ? `from ${stageLabel[e.from_stage]} ` : ""}to ${stageLabel[e.to_stage]}`}
                     {e.test_send ? ", test send" : ""}{e.outcome ? ` (${e.outcome})` : ""}
-                    <span className="block text-[13px] text-muted-foreground">{e.source === "gmail" && !e.test_send ? "Gmail feedback" : actorLabel(e.actor)}</span>
+                    <span className="mt-1 flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+                      <Badge variant="outline">{attribution.source}</Badge>
+                      {attribution.detail ? <span>{attribution.detail}</span> : null}
+                      {e.revision ? <span>Revision {e.revision}</span> : null}
+                    </span>
                     {e.note ? <span className="block text-sm text-muted-foreground">{e.note}</span> : null}
                   </span>
                 </li>

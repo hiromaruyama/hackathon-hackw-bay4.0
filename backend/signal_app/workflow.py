@@ -220,6 +220,9 @@ class Workflow:
             icp_current(state, revision)
             state.research_batch = batch
             state.discovery_revision = None
+            add_activity(state, 'research_sources_collected', 'system',
+                         f'Collected {len(batch.prospects)} prospect sources and {len(batch.competitors)} competitor sources for validation.',
+                         revision=revision)
 
         if refresh or not batch or batch.revision != revision or (deeper_sources and not batch.deeper_sources):
             batch = gather_research(self.providers, product, icp, bool(self.settings.nexla_sync_url),
@@ -257,7 +260,10 @@ class Workflow:
             state.competitor = competitors[0] if competitors else None
             state.discovery_revision = revision
             state.research_completed_at = utcnow()
-            add_activity(state, 'discovery_completed', actor, f'Saved {len(accounts)} sourced accounts for the approved ICP.', revision=revision)
+            verdicts = Counter(account.recommendation for account in accounts)
+            add_activity(state, 'discovery_completed', actor,
+                         f'Saved {len(accounts)} cited accounts. {verdicts["contact"]} marked Contact, '
+                         f'{verdicts["hold"]} on Hold, and {verdicts["reject"]} rejected.', revision=revision)
             if competitors:
                 add_activity(state, 'competitor_sourced', 'system', f'{len(competitors)} competitor comparisons were saved with public citations.')
             if batch.nexla_status:
@@ -725,7 +731,12 @@ class Workflow:
                 raise ProviderError('Gmail', 'OAuth settings or the controlled test recipient are missing.', 503)
             if state.leads[draft.account_id].bounced:
                 raise SignalError('previous_bounce', 'Review the delivery failure before sending another message.')
-            draft.dispatch = DispatchAttempt(revision=revision, actor=actor, at=utcnow())
+            now = utcnow()
+            window_start = now - timedelta(hours=1)
+            reserved = sum(event.type == 'dispatch_reserved' and event.at > window_start for event in state.activity)
+            if reserved >= self.settings.test_send_limit_per_hour:
+                raise SignalError('send_rate_limit', 'The controlled test workspace reached its hourly send limit. Try again later.', 429)
+            draft.dispatch = DispatchAttempt(revision=revision, actor=actor, at=now)
             graph.save_draft(draft)
             add_activity(state, 'dispatch_reserved', actor, 'One test send attempt was reserved.',
                          account_id=draft.account_id, draft_id=key, revision=revision)

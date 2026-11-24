@@ -23,7 +23,7 @@ All workspace and readiness routes require a demo session. Sign in with `POST /a
 | `POST /api/accounts/{id}/sequence` | — | Workspace with a follow-up email and LinkedIn draft, each with a separately reviewable revision. |
 | `PATCH /api/drafts/{id}` | `{"expected_revision":1,"subject":"…","body":"…"}` | Workspace with the next pending revision |
 | `POST /api/drafts/{id}/review` | `{"revision":2,"decision":"approve"}` | Workspace with the review decision. `decision` is `approve` or `reject`. |
-| `POST /api/drafts/{id}/send` | `{"revision":2}` | Workspace with the stored attempt result and any confirmed Test send event |
+| `POST /api/drafts/{id}/send` | `{"revision":2}` | Workspace with the stored attempt result and any confirmed Test send event. A new attempt above the workspace's hourly limit returns `429 send_rate_limit`. |
 | `POST /api/chat/session` | `{}` | `{"signed_url":"wss://…"}`, a short-lived ElevenLabs URL for the private Signal Assistant agent. `503 chat_unconfigured` without `ELEVENLABS_API_KEY` and `ELEVENLABS_AGENT_ID`, `429 chat_rate_limited` after 20 sessions in 10 minutes, `502 elevenlabs_unavailable` on provider failure. Don't log or cache the URL. |
 | `POST /api/drafts/{id}/schedule` | `{"revision":2,"scheduled_at":"2026-12-01T20:00:00Z"}` or `null` to clear | Workspace with an earliest action time on an approved follow-up. |
 | `POST /api/drafts/{id}/linkedin-handoff` | `{"revision":1}` | Workspace with a recorded handoff to the controlled LinkedIn profile after approval and prior touches. |
@@ -41,3 +41,5 @@ Intake history accepts up to 12 `{role, text}` entries with `user` or `assistant
 `icp.fields.industry_codes` contains records with `system`, `code`, and canonical `title`. Approval rejects codes outside the corresponding official catalog. `competitors` lists the available categories. The singular `competitor` field remains available to clients using the initial contract. Follow-up drafts appear under `accounts[].sequence`. Pipeline analytics give reached-stage counts for each industry, tier, variant, channel, and value proposition group. `research_schedule.next_due_at` comes from the persisted refresh state.
 
 Errors use `{"error":{"code":"…","message":"…"}}`. Handle `401` by opening sign-in, `409` by refreshing the workspace, and `422` by checking inputs. Show a retryable message for dependency failures. A send with `pending_outcome` needs manual verification and stays locked. A repeated send for that revision reads the saved attempt. It never sends again.
+
+Competitor `plans` list publicly documented plan names, their published `price` when available, and `evidence_id` references into the competitor's `evidence` list. Existing competitor records may have an empty plan list.

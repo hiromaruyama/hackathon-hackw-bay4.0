@@ -138,6 +138,23 @@ function Accounts() {
                     <div><dt className="text-sm text-muted-foreground">How {w.product?.name ?? "the product"} differs</dt><dd>{competitor.differentiator}</dd></div>
                     <div><dt className="text-sm text-muted-foreground">Public pricing</dt><dd>{competitor.pricing ?? "Unknown"}</dd></div>
                   </dl>
+                  {competitor.plans?.length ? (
+                    <section aria-label="Public plans and packaging" className="flex flex-col gap-2">
+                      <h3 className="font-semibold">Public plans and packaging</h3>
+                      <ul className="grid gap-2 sm:grid-cols-2">
+                        {competitor.plans.map((plan) => {
+                          const source = competitor.evidence.find((item) => item.id === plan.evidence_id);
+                          return (
+                            <li key={plan.name} className="flex flex-col gap-1 rounded-md border p-3">
+                              <span className="font-semibold">{plan.name}</span>
+                              <span className="text-sm">{plan.price ?? "Price undisclosed"}</span>
+                              {source ? <a href={source.url} target="_blank" rel="noreferrer noopener" className="text-sm text-muted-foreground">{source.title}</a> : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </section>
+                  ) : null}
                   <EvidenceList evidence={competitor.evidence} />
                 </Panel>
               )) : <Panel><p className="text-muted-foreground">No competitor was found with enough public evidence.</p></Panel>}

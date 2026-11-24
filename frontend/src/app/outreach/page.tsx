@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -52,15 +53,40 @@ function Outreach() {
   if (!account?.draft) {
     const contactable = w.accounts.find((a) => a.recommendation === "contact");
     return (
-      <Panel className="flex flex-col items-start gap-2 py-10">
-        <h1 className="text-lg font-bold">No draft to review yet</h1>
-        <p className="max-w-[56ch] text-ink-2">
-          {contactable ? `Open ${contactable.name} and write a draft. Signal cites a source for every claim about the prospect.` : "Drafts are written for accounts marked Contact. Find accounts first."}
-        </p>
-        <Button asChild className="mt-2 h-10 font-semibold">
-          <Link href={contactable ? `/accounts/view/?id=${contactable.id}` : "/accounts/"}>{contactable ? `Open ${contactable.name}` : "Open accounts"}</Link>
-        </Button>
-      </Panel>
+      <>
+        <h1 className="text-[22px] leading-tight font-bold">Outreach</h1>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Panel aria-labelledby="gmail-channel" className="flex flex-col items-start gap-2">
+            <h2 id="gmail-channel" className="font-semibold">Gmail</h2>
+            <p className="text-sm text-muted-foreground">Approve an initial or follow-up email before sending it to the controlled test inbox.</p>
+            {w.pipeline.gmail_feedback_configured ? (
+              <Button variant="link" size="sm" className="px-0" asChild>
+                <Link href="/pipeline/">Gmail feedback in Pipeline</Link>
+              </Button>
+            ) : null}
+          </Panel>
+          <Panel aria-labelledby="linkedin-channel" className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 id="linkedin-channel" className="font-semibold">LinkedIn</h2>
+              <Badge variant="secondary">Manual handoff</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">Generate a follow-up, then review and approve the message for your configured test profile.</p>
+          </Panel>
+        </div>
+        <Empty className="border bg-card">
+          <EmptyHeader>
+            <EmptyTitle role="heading" aria-level={2}>No draft to review yet</EmptyTitle>
+            <EmptyDescription>
+              {contactable ? `Open ${contactable.name} and write the initial Gmail draft to start its sequence.` : "Drafts start with accounts marked Contact. Open Accounts to review the recommendations or search again."}
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button asChild>
+              <Link href={contactable ? `/accounts/view/?id=${contactable.id}` : "/accounts/"}>{contactable ? `Open ${contactable.name}` : "Open accounts"}</Link>
+            </Button>
+          </EmptyContent>
+        </Empty>
+      </>
     );
   }
 
@@ -171,13 +197,13 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
               {steps.map((item, index) => (
                 <Button key={item.id} variant={item.id === draft.id ? "default" : "outline"} size="sm" asChild>
                   <Link href={`/outreach/?account=${account.id}&draft=${item.id}`} aria-current={item.id === draft.id ? "page" : undefined}>
-                    {index === 0 ? "Initial email" : item.channel === "linkedin" ? "LinkedIn follow-up" : "Follow-up email"}
+                    {index === 0 ? "Initial Gmail email" : item.channel === "linkedin" ? "LinkedIn follow-up" : "Gmail follow-up"}
                   </Link>
                 </Button>
               ))}
               {steps.length === 1 ? (
                 <Button variant="outline" size="sm" disabled={busy} onClick={() => void act(() => writeSequence(account.id))}>
-                  {pending === "sequence" ? <Spinner data-icon="inline-start" /> : null} Generate follow-ups
+                  {pending === "sequence" ? <Spinner data-icon="inline-start" /> : null} Generate Gmail and LinkedIn follow-ups
                 </Button>
               ) : null}
               {draft.message_variant ? <Badge variant="secondary">Variant {draft.message_variant}</Badge> : null}
@@ -205,9 +231,9 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
               <span className={cn("text-[13px] font-semibold", enr.tone)}>{enr.text}</span>
             </div>
             <div className="flex flex-col gap-0.5 bg-subtle px-[18px] py-3.5">
-              <span className="text-[13px] text-muted-foreground">Test recipient</span>
+              <span className="text-[13px] text-muted-foreground">{linkedin ? "LinkedIn" : "Gmail"}</span>
               <span className="font-semibold">{linkedin ? "Controlled LinkedIn profile" : "Controlled test inbox"}</span>
-              <span className="break-all text-ink-2">{draft.test_recipient ?? "Test recipient setup needed"}</span>
+              <span className="break-all text-ink-2">{draft.test_recipient ?? (linkedin ? "LinkedIn test profile setup needed" : "Gmail test inbox setup needed")}</span>
             </div>
           </div>
 
@@ -228,7 +254,7 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
             </InlineAlert>
           ) : null}
 
-          <section aria-label="Email draft" className="rounded-lg border bg-card">
+          <section aria-label={linkedin ? "LinkedIn draft" : "Gmail draft"} className="rounded-lg border bg-card">
             <div className="flex items-baseline gap-4 border-b px-5 py-3.5">
               <label htmlFor="subject" className="w-14 shrink-0 text-[13px] text-muted-foreground">{linkedin ? "Step title" : "Subject"}</label>
               <Input

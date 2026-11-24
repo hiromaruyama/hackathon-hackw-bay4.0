@@ -90,12 +90,14 @@ The pasted rubric lists **20 points each for Band and Flexprice**. Confirm quali
 
 Update this checklist alongside each merged milestone. The frontend and integration owner coordinates updates using both teammates’ PR notes and test evidence. The procedure is in [CLAUDE.md](CLAUDE.md).
 
+The [sponsor requirements checklist](docs/sponsor-requirements.md) includes all core requirements and bonuses, with open provider checks and access dependencies.
+
 | Milestone | Owner | Status | Verification or next action |
 | --- | --- | --- | --- |
-| Contract and shared fixture | Backend | Verified | [API routes and fixture](docs/api-contract.md), production static export, and 25 passing backend tests. |
+| Contract and shared fixture | Backend | Verified | [API routes and fixture](docs/api-contract.md), production static export, and 30 passing backend tests. |
 | Strategy and discovery | Both | Verified | Live Haiku returned typed intake suggestions and live discovery saved three cited accounts. Browser QA verified chat to approved ICP, NAICS/SIC validation, targeted filings/jobs, and all three competitor categories using provider fixtures. |
 | Graph, enrichment, and grounded draft | Both | Verified | Live Neo4j and Hunter supported a cited draft. The integrated browser showed sourced employment, education, a shared affiliation, job-linked evaluation, renewal, and replacement paths using fixtures. Render uses a daily refresh interval and the [scheduled health check](https://github.com/hiromaruyama/hackathon-hackw-bay4.0/actions/runs/45487327979) passed. |
-| Review, dispatch, and pipeline | Both | Partial | Live Gmail receipt and metadata access were confirmed in the controlled inbox. Browser QA verified separate follow-up approval and scheduling, a controlled LinkedIn handoff, Gmail reply attribution, rep stage changes, and Message Variant analytics. LinkedIn API delivery remains dependent on messaging access. |
+| Review, dispatch, and pipeline | Both | Partial | Live Gmail receipt and metadata access were confirmed in the controlled inbox. Browser QA verified Gmail and LinkedIn entry points, follow-up approval and scheduling, a controlled LinkedIn handoff, Gmail automation and rep attribution, and Message Variant analytics. The workspace-wide rate limit passed a concurrent two-draft test. Gmail push and LinkedIn API delivery remain open. |
 | Flexprice | Backend | Verified | Live Sandbox accepted enrichment, graph-query and send events and allocated 1.15 credits to one lead. Browser QA verified balance, event table and the HTTP 402 block before Hunter. |
 | Band Desktop | Frontend | Partial | The signed-in daemon reached Band and listed three connected Express agents. Four-role handoff with recorded approval and usage telemetry remains open. |
 | Snyk | Frontend | Partial | Local SCA reported zero findings across 26 backend dependencies and the frontend lockfile. Snyk Code is unavailable to the configured organization. GitHub Actions needs a repository scanner secret to run both scans. |

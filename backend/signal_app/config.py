@@ -39,6 +39,7 @@ class Settings:
     gmail_feedback_refresh_token: str = field(default='', repr=False)
     gmail_sender: str | None = None
     test_recipient: str | None = None
+    test_send_limit_per_hour: int = 6
     linkedin_test_profile_url: str | None = None
     suppressed_recipients: frozenset[str] = field(default_factory=frozenset, repr=False)
     flexprice_enabled: bool = False
@@ -97,6 +98,13 @@ class Settings:
         except ValueError:
             raise ValueError('SIGNAL_RESEARCH_REFRESH_MINUTES must be a nonnegative integer.') from None
 
+        try:
+            test_send_limit = int(get('SIGNAL_TEST_SEND_LIMIT_PER_HOUR', '6'))
+            if test_send_limit < 1:
+                raise ValueError
+        except ValueError:
+            raise ValueError('SIGNAL_TEST_SEND_LIMIT_PER_HOUR must be a positive integer.') from None
+
         return cls(
             public_origin=origin, demo_username=get('SIGNAL_DEMO_USERNAME', 'demo'),
             demo_password=get('SIGNAL_DEMO_PASSWORD'), session_secret=get('SIGNAL_SESSION_SECRET'),
@@ -110,6 +118,7 @@ class Settings:
             gmail_client_secret=get('GMAIL_CLIENT_SECRET'), gmail_refresh_token=get('GMAIL_REFRESH_TOKEN'),
             gmail_feedback_refresh_token=get('GMAIL_FEEDBACK_REFRESH_TOKEN'),
             gmail_sender=email('GMAIL_SENDER_ADDRESS'), test_recipient=email('SIGNAL_TEST_RECIPIENT'),
+            test_send_limit_per_hour=test_send_limit,
             linkedin_test_profile_url=linkedin_profile or None,
             suppressed_recipients=frozenset(item for item in suppressed if item),
             flexprice_enabled=get('FLEXPRICE_ENABLED', 'false').lower() == 'true',
