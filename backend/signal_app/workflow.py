@@ -7,13 +7,16 @@ from .classification import validate_codes
 from .config import EMAIL_PATTERN, Settings
 from .errors import ProviderError, SignalError
 from .models import (
-    Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview, DraftRevision, EditDraft, GmailWatch, GraphInsight, Icp,
-    Lead, Pipeline, PipelineChange, PipelineEvent, Product, ProductInput, ResearchSchedule, ReviewDraft, ScheduleDraft, State,
+    INITIAL_DISCOVERY_LIMIT, MAX_DISCOVERY_ACCOUNTS, Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview,
+    DraftRevision, EditDraft, GmailWatch, GraphInsight, Icp, Lead, PendingDiscoveryExpansion, Pipeline, PipelineChange, PipelineEvent, Product, ProductInput,
+    ResearchBatch, ResearchSchedule, ReviewDraft, ScheduleDraft, State,
     Usage, UsageEvent, UsageOperation, Workspace,
 )
 from .pipeline import PIPELINE_STAGES, funnel_analytics
-from .providers import Delivery, Enriched, GmailFeedback, Providers, clean_text, stable_id, utcnow
-from .research import analyze_research, check_copy, draft_followups, focus_research, gather_research, make_profile, write_copy
+from .providers import Delivery, Enriched, GmailFeedback, Providers, clean_text, normalize_domain, stable_id, utcnow
+from .research import (
+    analyze_research, check_copy, draft_followups, focus_research, gather_research, make_profile, search_more_accounts, write_copy,
+)
 from .store import GraphTransaction, Neo4jStore
 
 
@@ -115,6 +118,8 @@ class Workflow:
                     else:
                         action = 'Review the current draft revision'
                     lead = lead.model_copy(update={'next_action': action})
+                elif lead.stage == 'matched' and account and account.recommendation == 'contact' and account.enrichment_status != 'not_started':
+                    lead = lead.model_copy(update={'next_action': 'Write a source-backed draft'})
                 leads.append(lead)
             stage_counts = Counter(lead.stage for lead in leads)
             reached_contacted = sum(lead.stage != 'matched' for lead in leads)
@@ -137,6 +142,7 @@ class Workflow:
                 ),
                 usage=usage,
                 research_schedule=research_schedule(state, self.settings.research_refresh_minutes),
+                more_accounts_available=bool(state.approved_icp_revision and 0 < len(accounts) < MAX_DISCOVERY_ACCOUNTS),
             )
 
         return self.store.read(view)
@@ -155,6 +161,7 @@ class Workflow:
             state.approved_icp_revision = None
             state.discovery_revision = None
             state.research_batch = None
+            state.pending_discovery_expansion = None
             state.research_completed_at = None
             state.research_scheduled_attempt_at = None
             state.accounts = []
@@ -194,6 +201,7 @@ class Workflow:
             state.approved_icp_revision = revision
             state.discovery_revision = None
             state.research_batch = None
+            state.pending_discovery_expansion = None
             state.research_completed_at = None
             state.research_scheduled_attempt_at = None
             state.accounts = []
@@ -225,35 +233,24 @@ class Workflow:
                          revision=revision)
 
         if refresh or not batch or batch.revision != revision or (deeper_sources and not batch.deeper_sources):
+            previous_sources = batch.additional_prospects if batch and batch.revision == revision else []
             batch = gather_research(self.providers, product, icp, bool(self.settings.nexla_sync_url),
                                     self.settings.discovery_domains, deeper_sources=deeper_sources)
+            batch.additional_prospects = previous_sources
             self.store.write(cache)
 
-        accounts, competitors = analyze_research(self.providers, product, icp, batch)
+        account_limit = MAX_DISCOVERY_ACCOUNTS if batch.additional_prospects else INITIAL_DISCOVERY_LIMIT
+        accounts, competitors = analyze_research(self.providers, product, icp, batch, account_limit=account_limit)
         if not batch.focused_search_used and (len(accounts) < 2 or not any(a.recommendation == 'contact' for a in accounts)):
             previous_sources = batch.prospects
             batch = focus_research(self.providers, product, icp, batch, accounts, self.settings.discovery_domains)
             self.store.write(cache)
             if batch.prospects != previous_sources:
-                accounts, competitors = analyze_research(self.providers, product, icp, batch)
+                accounts, competitors = analyze_research(self.providers, product, icp, batch, account_limit=account_limit)
 
         def save(graph: GraphTransaction, state: State) -> None:
             icp_current(state, revision)
-            previous = {account.id: account for account in state.accounts}
-            for account in accounts:
-                if old := previous.get(account.id):
-                    account.enrichment_status = old.enrichment_status
-                    account.contact = old.contact
-                if account.recommendation == 'contact':
-                    lead = state.leads.get(account.id)
-                    if not lead or lead.stage == 'matched':
-                        state.leads[account.id] = Lead(
-                            account_id=account.id, company=account.name, role=account.buyer_role, fit_score=account.fit_score,
-                            actor='system', updated_at=account.researched_at, next_action='Enrich this matched account',
-                            industry=account.industry, tier=account.tier,
-                        )
-                elif account.id in state.leads and state.leads[account.id].stage == 'matched':
-                    state.leads[account.id].next_action = 'Review the current research before outreach'
+            self._record_account_matches(state, accounts)
             graph.save_discovery(product, accounts, competitors)
             state.accounts = accounts
             state.competitors = competitors
@@ -271,6 +268,86 @@ class Workflow:
 
         self.store.write(save)
         return self.workspace()
+
+    @staticmethod
+    def _record_account_matches(state: State, accounts: list[Account]) -> None:
+        previous = {account.id: account for account in state.accounts}
+        for account in accounts:
+            if old := previous.get(account.id):
+                account.enrichment_status = old.enrichment_status
+                account.contact = old.contact
+            lead = state.leads.get(account.id)
+            if account.recommendation == 'contact' and (not lead or lead.stage == 'matched'):
+                state.leads[account.id] = Lead(
+                    account_id=account.id, company=account.name, role=account.buyer_role, fit_score=account.fit_score,
+                    actor='system', updated_at=account.researched_at, next_action='Enrich this matched account',
+                    industry=account.industry, tier=account.tier,
+                )
+            elif account.recommendation != 'contact' and lead and lead.stage == 'matched':
+                lead.next_action = 'Review the current research before outreach'
+
+    def discover_more(self, revision: int, actor: str, source_domains: list[str]) -> Workspace:
+        with self._discovery_lock:
+            product, icp, existing, pending = self.store.read(lambda graph, state: (
+                state.product, icp_current(state, revision), tuple(account.domain for account in state.accounts),
+                state.pending_discovery_expansion,
+            ))
+            if len(existing) >= MAX_DISCOVERY_ACCOUNTS:
+                return self.workspace()
+            if not product or not existing:
+                raise SignalError('discovery_required', 'Find the first set of accounts before looking for more.')
+
+            normalized = [normalize_domain(domain) for domain in source_domains]
+            if None in normalized:
+                raise SignalError('invalid_source_domain', 'Use public hostnames such as example.com.', 422)
+            requested = tuple(dict.fromkeys(domain for domain in normalized if domain))
+            normalized_config = [normalize_domain(domain) for domain in self.settings.discovery_domains]
+            if None in normalized_config:
+                raise ProviderError('Tavily', 'requires valid configured research source domains.', 503)
+            configured = tuple(dict.fromkeys(domain for domain in normalized_config if domain))
+            if configured and any(not any(domain == root or domain.endswith('.' + root) for root in configured)
+                                  for domain in requested):
+                raise SignalError('source_domain_out_of_scope', 'Choose from the configured research source domains.', 422)
+            allowed = requested or configured
+            remaining_domains = tuple(domain for domain in allowed if domain not in existing)
+            if allowed and not remaining_domains:
+                return self.workspace()
+
+            key = stable_id('discovery-expansion', str(revision), ','.join(sorted(existing)), ','.join(sorted(remaining_domains)))
+            if pending and pending.key == key:
+                sources = pending.sources
+            else:
+                sources = search_more_accounts(self.providers, product, icp, remaining_domains, existing)
+
+                def cache(graph: GraphTransaction, state: State) -> None:
+                    icp_current(state, revision)
+                    state.pending_discovery_expansion = PendingDiscoveryExpansion(key=key, sources=sources)
+
+                self.store.write(cache)
+            capacity = min(MAX_DISCOVERY_ACCOUNTS - len(existing), INITIAL_DISCOVERY_LIMIT)
+            batch = ResearchBatch(revision=revision, prospects=sources, competitors=[])
+            accounts, _ = analyze_research(self.providers, product, icp, batch, exclude_domains=existing, account_limit=capacity)
+
+            def save(graph: GraphTransaction, state: State) -> None:
+                icp_current(state, revision)
+                saved = {account.domain for account in state.accounts}
+                new_accounts = [account for account in accounts if account.domain not in saved][:MAX_DISCOVERY_ACCOUNTS - len(saved)]
+                if new_accounts:
+                    self._record_account_matches(state, new_accounts)
+                    graph.save_discovery(product, new_accounts, [])
+                    state.accounts.extend(new_accounts)
+                    retained = state.research_batch or ResearchBatch(revision=revision, prospects=[], competitors=[])
+                    urls = {evidence.url for account in new_accounts for evidence in account.evidence}
+                    additional = {source.id: source for source in retained.additional_prospects}
+                    additional.update((source.id, source) for source in sources if source.url in urls)
+                    state.research_batch = retained.model_copy(update={'additional_prospects': list(additional.values())[-24:]})
+                if state.pending_discovery_expansion and state.pending_discovery_expansion.key == key:
+                    state.pending_discovery_expansion = None
+                add_activity(state, 'discovery_expanded', actor,
+                             f'Added {len(new_accounts)} cited accounts. {len(state.accounts)} accounts are saved.', revision=revision)
+
+            self.store.write(save)
+            return self.workspace()
 
     def refresh_research_due(self) -> bool:
         interval = self.settings.research_refresh_minutes
@@ -470,13 +547,18 @@ class Workflow:
 
         self.store.write(save)
 
-    def _draft_inputs(self, graph: GraphTransaction, state: State, account_id: str):
+    @staticmethod
+    def _qualified_account(state: State, account_id: str) -> Account:
         account = get_account(state, account_id)
         icp_current(state, account.icp_revision)
         if account.recommendation != 'contact':
             raise SignalError('account_not_qualified', 'Resolve this lead’s research hold before enriching or drafting.')
         if not state.product or not account.buyer_role:
-            raise SignalError('buyer_role_missing', 'Approve a buyer title before drafting.')
+            raise SignalError('buyer_role_missing', 'Approve a buyer title before looking up a contact or drafting.')
+        return account
+
+    def _draft_inputs(self, graph: GraphTransaction, state: State, account_id: str):
+        account = self._qualified_account(state, account_id)
         path = graph.graph_path(state.product.id, account)
         if len(path) != 3 or not path[-1].evidence_id:
             raise SignalError('graph_evidence_missing', 'This account has no usable graph-backed signal.')
@@ -501,10 +583,9 @@ class Workflow:
         cost = self.settings.flexprice_enrichment_cost
 
         def reserve(graph: GraphTransaction, state: State) -> UsageEvent:
-            current = get_account(state, account.id)
-            icp_current(state, current.icp_revision)
+            current = self._qualified_account(state, account.id)
             if current.researched_at != account.researched_at:
-                raise SignalError('discovery_changed', 'Refresh and draft from the current research.')
+                raise SignalError('discovery_changed', 'Refresh the account and use the current research.')
             usage = state.usage or Usage(enrichment_cost=float(cost))
             if state.billing_wallet != wallet_key or state.billing_remaining is None:
                 state.billing_wallet = wallet_key
@@ -547,6 +628,23 @@ class Workflow:
         if event:
             self._submit_meter(event, billable=enriched.status != 'failed')
 
+    def _enrich_if_needed(self, account: Account, actor: str) -> Enriched:
+        if account.enrichment_status != 'not_started':
+            return Enriched(account.enrichment_status, account.contact)
+        event = self._reserve_credit(account, actor)
+        try:
+            enriched = self.providers.enrich(account.domain, account.buyer_role)
+        except ProviderError:
+            enriched = Enriched('failed', None)
+        self._finish_enrichment(account, enriched, event, actor)
+        return enriched
+
+    def enrich_account(self, account_id: str, actor: str) -> Workspace:
+        with self._draft_generation_lock:
+            account = self.store.read(lambda graph, state: self._qualified_account(state, account_id))
+            self._enrich_if_needed(account, actor)
+            return self.workspace()
+
     def _queue_extra_meter(self, state: State, operation: UsageOperation, account_id: str,
                            key: str, revision: int) -> UsageEvent | None:
         if not self.settings.flexprice_enabled or not self.settings.flexprice_meter_graph_and_outreach:
@@ -585,15 +683,7 @@ class Workflow:
             if existing and (existing.dispatch or evidence_id in existing.current.evidence_ids and set(existing.current.evidence_ids) <= {ev.id for ev in account.evidence}):
                 return self.workspace()
 
-            if account.enrichment_status == 'not_started':
-                event = self._reserve_credit(account, actor)
-                try:
-                    enriched = self.providers.enrich(account.domain, account.buyer_role)
-                except ProviderError:
-                    enriched = Enriched('failed', None)
-                self._finish_enrichment(account, enriched, event, actor)
-            else:
-                enriched = Enriched(account.enrichment_status, account.contact)
+            enriched = self._enrich_if_needed(account, actor)
 
             role = enriched.contact.role if enriched.status == 'verified' and enriched.contact else account.buyer_role
             variant = 'A' if int(stable_id('variant', account.id)[-1], 16) % 2 == 0 else 'B'

@@ -5,6 +5,7 @@ from decimal import Decimal
 from email import policy
 from email.parser import BytesParser
 from secrets import token_urlsafe
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -12,7 +13,8 @@ import pytest
 from signal_app.config import Settings
 from signal_app.errors import ProviderError
 from signal_app.models import DraftRevision, UsageEvent
-from signal_app.providers import GMAIL_METADATA_SCOPE, Providers
+from signal_app.providers import GMAIL_METADATA_SCOPE, JsonPayload, Providers
+from signal_app.research import DiscoveryOutput
 
 
 def message(recipient='demo@example.com'):
@@ -25,6 +27,22 @@ def message(recipient='demo@example.com'):
 def gmail_settings():
     return Settings(gmail_client_id='dummy', gmail_client_secret='dummy', gmail_refresh_token='dummy',
                     gmail_sender='owner@example.com', test_recipient='demo@example.com')
+
+def test_discovery_json_wrapper_preserves_validation():
+    providers = Providers(Settings())
+
+    def parse(**request):
+        assert request['output_format'] is JsonPayload
+        assert 'CandidateOutput' in request['system']
+        return SimpleNamespace(stop_reason='end_turn', parsed_output=JsonPayload(payload=payload))
+
+    providers.claude = SimpleNamespace(messages=SimpleNamespace(parse=parse))
+    payload = '{"accounts":[],"competitors":[]}'
+    result = providers.complete(DiscoveryOutput, 'Extract companies.', 'No sources.', max_tokens=100, wrap_json=True)
+    assert result.accounts == []
+    payload = '{"accounts":[{"name":"Missing evidence"}]}'
+    with pytest.raises(ProviderError, match='failed validation'):
+        providers.complete(DiscoveryOutput, 'Extract companies.', 'No sources.', max_tokens=100, wrap_json=True)
 
 
 def test_gmail_uses_exact_mime_and_configured_recipient():

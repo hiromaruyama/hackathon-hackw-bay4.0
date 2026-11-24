@@ -20,6 +20,8 @@ Intake chat prompts for product facts and missing details. Its output contains a
 
 Discovery uses the current approved revision. The backend deduplicates by normalized domain and retains public evidence before extraction. A standard pass runs a prospect search and a competitor search, plus one focused retry when evidence is thin. The selected filings and jobs option adds two targeted searches. Nexla contributes provisioned public records. The typed model extracts quotes and source IDs. The code verifies that the quote exists at its source and that the company or its domain is supported. Direct, indirect, and alternative competitor listings require cited positioning and differences. Prices require their own evidence.
 
+The main prospect search requests up to 16 source pages and saves up to six accounts on the first pass. **Find more accounts** searches for new domains and appends cited results up to ten saved accounts. The append transaction preserves the saved accounts, revisions, and competitor results. The backend caches new source pages before extraction so a Claude failure can be retried without repeating the Tavily request. Qualified accounts can look up a Hunter contact before drafting. Later draft creation reuses the saved lookup and applies the current research and approval rules.
+
 Fit adds 35 points for supported industry alignment, 20 for company size, 35 for product need, and 10 for geography. Intent is 100 for a recent direct signal, 75 for a recent indirect signal, 50 for weak or stale evidence, and zero without a signal. Contact requires at least 70 fit and 75 intent and no exclusion. A cited hard exclusion results in Reject. Other accounts are held for review.
 
 ## Graph ontology and queries

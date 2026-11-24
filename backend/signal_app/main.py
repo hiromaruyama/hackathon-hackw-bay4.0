@@ -20,7 +20,7 @@ from .config import GMAIL_PUSH_PATH, Settings
 from .errors import SignalError
 from .gmail_push import GmailPushAuthenticator, gmail_notification
 from .models import (
-    ApproveIcp, DiscoverInput, EditDraft, GraphInsight, InputModel, IntakeChat, IntakeReply, PipelineChange, ProductInput,
+    ApproveIcp, DiscoverInput, EditDraft, GraphInsight, InputModel, IntakeChat, IntakeReply, MoreDiscoveryInput, PipelineChange, ProductInput,
     ReviewDraft, RevisionInput, ScheduleDraft, Workspace,
 )
 from .providers import Providers
@@ -211,6 +211,14 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     @app.post('/api/discover')
     def discover(body: DiscoverInput, actor: Actor) -> Workspace:
         return workflow.discover(body.revision, actor, refresh=body.refresh, deeper_sources=body.deeper_sources)
+
+    @app.post('/api/discover/more')
+    def discover_more(body: MoreDiscoveryInput, actor: Actor) -> Workspace:
+        return workflow.discover_more(body.revision, actor, body.source_domains)
+
+    @app.post('/api/accounts/{account_id}/enrich')
+    def enrich_account(account_id: str, actor: Actor) -> Workspace:
+        return workflow.enrich_account(account_id, actor)
 
     @app.post('/api/accounts/{account_id}/draft')
     def create_draft(account_id: str, actor: Actor) -> Workspace:

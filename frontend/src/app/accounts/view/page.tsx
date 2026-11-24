@@ -25,8 +25,8 @@ export default function AccountViewPage() {
 
 function AccountView() {
   const id = useSearchParams().get("id");
-  const { workspace, mode, writeDraft, pending } = useWorkspace();
-  const [error, setError] = useState<ApiError | null>(null);
+  const { workspace, mode, enrichAccount, writeDraft, pending } = useWorkspace();
+  const [error, setError] = useState<{ detail: ApiError; action: "contact" | "draft" } | null>(null);
   const a = workspace!.accounts.find((x) => x.id === id);
 
   if (!a) {
@@ -43,13 +43,15 @@ function AccountView() {
 
   const enr = enrichmentText(a.enrichment_status, a.contact?.verification_status);
   const drafting = pending === `draft-${a.id}`;
+  const enriching = pending === `enrich-${a.id}`;
+  const canEnrich = mode === "live" && a.recommendation === "contact" && a.enrichment_status === "not_started";
   const risk = a.negative_signal;
   const riskSource = a.evidence.find((e) => e.id === risk?.evidence_id);
 
-  async function onDraft() {
+  async function run(action: "contact" | "draft") {
     setError(null);
-    const res = await writeDraft(a!.id);
-    if (!res.ok) setError(res.error ?? null);
+    const res = await (action === "contact" ? enrichAccount : writeDraft)(a!.id);
+    if (!res.ok && res.error) setError({ detail: res.error, action });
   }
 
   return (
@@ -71,17 +73,17 @@ function AccountView() {
               <Link href={`/outreach/?account=${a.id}`}>Open draft</Link>
             </Button>
           ) : (
-            <Button className="h-10 font-semibold" onClick={onDraft} disabled={drafting}>
-              {drafting ? <Spinner /> : null}
-              {drafting ? "Finding contact and writing…" : "Find contact and write draft"}
+            <Button className="h-10 font-semibold" onClick={() => run("draft")} disabled={Boolean(pending)}>
+              {drafting ? <Spinner data-icon="inline-start" /> : null}
+              {drafting ? "Writing draft…" : "Write draft"}
             </Button>
           )
         ) : null}
       </div>
 
       {error ? (
-        <InlineAlert tone="danger" title="The draft wasn't written" action={<Button variant="outline" size="sm" onClick={onDraft}>Try again</Button>}>
-          {error.status === 402 ? "There aren't enough enrichment credits for a Hunter lookup. No lookup was made." : error.message}
+        <InlineAlert tone="danger" title={error.action === "contact" ? "Contact lookup couldn't run" : "The draft wasn't written"} action={<Button variant="outline" size="sm" onClick={() => run(error.action)}>Try again</Button>}>
+          {error.detail.message}
         </InlineAlert>
       ) : null}
 
@@ -116,7 +118,14 @@ function AccountView() {
 
         <div className="flex flex-col gap-6">
           <Panel aria-labelledby="contact-title">
-            <PanelHeader title="Contact" id="contact-title" />
+            <PanelHeader title="Contact" id="contact-title">
+              {canEnrich ? (
+                <Button variant="outline" size="sm" disabled={Boolean(pending)} onClick={() => run("contact")}>
+                  {enriching ? <Spinner data-icon="inline-start" /> : null}
+                  {enriching ? "Finding contact…" : "Find contact"}
+                </Button>
+              ) : null}
+            </PanelHeader>
             {a.contact ? (
               <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-y-2 text-sm">
                 <dt className="text-muted-foreground">Role</dt><dd>{a.contact.role}</dd>
@@ -128,7 +137,7 @@ function AccountView() {
               </dl>
             ) : (
               <p className={cn("text-sm", enr.tone)}>
-                {a.recommendation === "contact" ? `${enr.text}. Writing a draft looks up one contact for the ${a.buyer_role ?? "buyer"} role.` : "Held and rejected accounts aren't looked up."}
+                {canEnrich ? `Buyer role: ${a.buyer_role ?? "Approved profile role"}` : enr.text}
               </p>
             )}
           </Panel>

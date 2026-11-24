@@ -46,6 +46,8 @@ export const api = {
   approveIcp: (input: IcpApproveInput) => request<Workspace>("POST", "/api/icp/approve", input),
   discover: (revision: number, refresh = false, deeper_sources = false) =>
     request<Workspace>("POST", "/api/discover", { revision, refresh, deeper_sources }),
+  discoverMore: (revision: number) => request<Workspace>("POST", "/api/discover/more", { revision }),
+  enrichAccount: (accountId: string) => request<Workspace>("POST", `/api/accounts/${encodeURIComponent(accountId)}/enrich`),
   draft: (accountId: string) => request<Workspace>("POST", `/api/accounts/${encodeURIComponent(accountId)}/draft`),
   graphInsights: (accountId: string) => request<GraphInsight[]>("GET", `/api/accounts/${encodeURIComponent(accountId)}/insights`),
   sequence: (accountId: string) => request<Workspace>("POST", `/api/accounts/${encodeURIComponent(accountId)}/sequence`),

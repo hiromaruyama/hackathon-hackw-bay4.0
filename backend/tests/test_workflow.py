@@ -102,7 +102,7 @@ class SimulatedProviders:
                 return [*self.prospects, *self.bios]
         return [self.competitor] if 'vendors software' in query or 'adjacent B2B' in query else self.prospects
 
-    def complete(self, schema, instructions, context, *, max_tokens=1800):
+    def complete(self, schema, instructions, context, *, max_tokens=1800, wrap_json=False):
         if schema is IntakeReply:
             request = json.loads(context)
             self.intake_requests.append(request)
@@ -630,6 +630,77 @@ def test_discovery_retry_reuses_sources_after_model_failure(system):
     providers.reject_discovery = False
     assert len(post(client, '/api/discover', {'revision': revision})['accounts']) == 3
     assert len(providers.searches) == searches
+
+
+def test_expand_discovery_reuses_sources_and_preserves_an_approved_draft(system, monkeypatch):
+    client, providers = system
+    route = '/api/discover/more'
+    post(client, route, {'revision': 2}, 401)
+    _, draft = prepare_draft(client)
+    before = post(client, f'/api/drafts/{draft["id"]}/review', {'revision': draft['revision'], 'decision': 'approve'})
+    revision = before['approved_icp_revision']
+    original = providers.complete
+    searches = []
+    south = Source('south', 'https://south.example.com/news/site-analysis', 'South Energy',
+                   'South Energy develops utility-scale solar in the United States. '
+                   'South Energy announced site analysis for its new solar project.', providers.recent, 'tavily')
+
+    def search(query, *, limit, include_details, source_domains, exclude_domains):
+        searches.append((limit, source_domains, exclude_domains))
+        return [providers.prospects[0], south]
+
+    def complete(schema, instructions, context, *, max_tokens, wrap_json=False):
+        result = original(schema, instructions, context, max_tokens=max_tokens, wrap_json=wrap_json)
+        data = result.model_dump()
+        data['accounts'].append({
+            'name': 'South Energy', 'domain': 'south.example.com',
+            'identity': proof('south', 'South Energy develops utility-scale solar'),
+            'industry': FIELDS['industries'][0], 'geography': FIELDS['geography'][0],
+            'fit': {
+                'industry': proof('south', 'develops utility-scale solar'),
+                'geography': proof('south', 'in the United States'),
+                'product_need': proof('south', 'announced site analysis for its new solar project'),
+            },
+            'signal': {'kind': 'direct', 'summary': 'New solar project site analysis',
+                       'evidence': proof('south', 'South Energy announced site analysis for its new solar project.')},
+        })
+        return schema.model_validate(data)
+
+    monkeypatch.setattr(providers, 'search', search)
+    monkeypatch.setattr(providers, 'complete', complete)
+    invalid = post(client, route, {'revision': revision, 'source_domains': ['http://127.0.0.1']}, 422)
+    assert invalid['error']['code'] == 'invalid_source_domain'
+    request = {'revision': revision, 'source_domains': ['www.south.example.com']}
+    providers.reject_discovery = True
+    assert post(client, route, request, 502)['error']['code'] == 'claude_unavailable'
+    providers.reject_discovery = False
+    expanded = post(client, route, request)
+    assert searches == [(16, ('south.example.com',), tuple(a['domain'] for a in before['accounts']))]
+    assert expanded['accounts'][:-1] == before['accounts']
+    assert expanded['competitors'] == before['competitors']
+    assert expanded['accounts'][-1]['domain'] == 'south.example.com'
+    assert expanded['accounts'][-1]['recommendation'] == 'contact'
+    assert len(providers.lookups) == 1
+
+
+def test_contact_lookup_is_saved_without_a_draft_and_reused(system):
+    client, providers = system
+    state = discover_accounts(client)
+    target = next(a for a in state['accounts'] if a['recommendation'] == 'contact')
+    rejected = next(a for a in state['accounts'] if a['recommendation'] == 'reject')
+    path = f'/api/accounts/{target["id"]}/enrich'
+    post(client, f'/api/accounts/{rejected["id"]}/enrich', expected=409)
+    assert providers.lookups == []
+    for _ in range(2):
+        enriched = post(client, path)
+        account = next(a for a in enriched['accounts'] if a['id'] == target['id'])
+        assert account['enrichment_status'] == 'verified'
+        assert account['contact']['email_masked']
+        assert account['draft'] is None
+    assert len(providers.lookups) == 1
+    assert get_draft(client, target['id'])['review_status'] == 'pending_review'
+    assert len(providers.lookups) == 1
+    assert providers.sent == []
 
 
 def test_weak_research_makes_at_most_one_focused_search(system):

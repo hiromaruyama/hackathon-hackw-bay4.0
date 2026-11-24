@@ -8,9 +8,9 @@ from pydantic import Field, StringConstraints
 
 from .errors import ProviderError, SignalError
 from .models import (
-    Account, Competitor, CompetitorPlan, Confidence, Description, Evidence, Expansion, Icp, IcpFields,
-    InputModel, IntakeChat, IntakeFields, IntakeReply, MarketSignal, NegativeSignal, Product, PublicAffiliation,
-    ResearchBatch, ShortText, Signal, SignalKind, Source, SynthesisMode,
+    INITIAL_DISCOVERY_LIMIT, MAX_DISCOVERY_ACCOUNTS, Account, Competitor, CompetitorPlan, Confidence, Description, Evidence,
+    Expansion, Icp, IcpFields, InputModel, IntakeChat, IntakeFields, IntakeReply, MarketSignal, NegativeSignal, Product,
+    PublicAffiliation, ResearchBatch, ShortText, Signal, SignalKind, Source, SynthesisMode,
 )
 from .providers import Providers, as_date, clean_text, normalize_domain, stable_id, utcnow
 
@@ -392,7 +392,7 @@ def gather_research(providers: Providers, product: Product, icp: Icp, use_nexla:
     criteria = clean_text(', '.join(fields.triggers[:2]), 100)
     prospects = providers.search(
         f'{industry} {geography} official company press releases {utcnow().year} {criteria or "recent project announcements"}',
-        limit=10, include_details=bool(source_domains), source_domains=source_domains,
+        limit=16, include_details=bool(source_domains), source_domains=source_domains,
     )
     try:
         competitors = providers.search(f'{clean_text(product.description, 130)} vendors software direct indirect spreadsheet consulting alternatives official pricing capabilities', limit=7)
@@ -432,14 +432,30 @@ def focus_research(providers: Providers, product: Product, icp: Icp, batch: Rese
     return batch.model_copy(update={'prospects': list(sources.values()), 'focused_search_used': True})
 
 
-def analyze_research(providers: Providers, product: Product, icp: Icp, batch: ResearchBatch) -> tuple[list[Account], list[Competitor]]:
-    if not batch.prospects:
+def search_more_accounts(providers: Providers, product: Product, icp: Icp, source_domains: tuple[str, ...],
+                         existing_domains: tuple[str, ...]) -> list[Source]:
+    fields = icp.fields
+    industry = clean_text(', '.join(fields.industries[:3]), 145) or clean_text(product.description, 110)
+    geography = clean_text(', '.join(fields.geography[:2]), 65)
+    trigger = clean_text(next(iter(fields.triggers), ''), 100)
+    return providers.search(
+        f'{industry} in {geography} {utcnow().year} new project development, site selection, permits or financing. '
+        f'Find different companies with dated, first-party announcements relevant to {trigger or "the approved buyer profile"}.',
+        limit=16, include_details=True, source_domains=source_domains, exclude_domains=existing_domains,
+    )
+
+
+def analyze_research(providers: Providers, product: Product, icp: Icp, batch: ResearchBatch, *,
+                     exclude_domains: tuple[str, ...] = (), account_limit: int = INITIAL_DISCOVERY_LIMIT) -> tuple[list[Account], list[Competitor]]:
+    prospects = list({source.id: source for source in batch.additional_prospects + batch.prospects}.values())
+    if not prospects:
         return [], []
-    sources = {source.id: source for source in batch.prospects + batch.competitors}
+    sources = {source.id: source for source in prospects + batch.competitors}
     out = providers.complete(
         DiscoveryOutput,
-        EXTRACTION_RULE + ' Extract up to four distinct prospective companies with a domain grounded in an official source '
-        'or a literal domain reference. For each aligned fit factor quote a supporting excerpt from the company or '
+        EXTRACTION_RULE + f' Extract up to {account_limit + 1} distinct prospective companies. Skip any domain in excluded_domains. '
+        'Ground each domain in an official source '
+        'or a literal domain reference. Keep evidence quotes brief and verbatim. For each aligned fit factor quote a supporting excerpt from the company or '
         'a source that names it. Product need must be tied to the product capabilities. Only claim headcount/revenue fit '
         'when the source supports the stated band. Include any dated positive signal and explicit negative signal. '
         'For a hard exclusion, copy the matching approved ICP exclusion into matched_exclusion. Hiring is indirect. '
@@ -450,26 +466,24 @@ def analyze_research(providers: Providers, product: Product, icp: Icp, batch: Re
         'For each evidenced category provide one competitor in competitors. Direct solves the same job with similar software, '
         'indirect solves a broader or adjacent job, and alternative uses a different approach such as a spreadsheet or consultancy. '
         'Support positioning and differences from the stated product with public evidence. Quote public pricing if found. '
+        'Use null for unknown scalar or object values, and empty lists when no items are supported. '
         'In plans, include up to four publicly documented tiers or packages. Quote each plan name, its inclusions, and the '
         'public price from the same source excerpt. Copy the price as printed and leave it empty if it is undisclosed.',
-        context(product=public_product(product), approved_icp=icp.fields.model_dump(),
-                prospect_sources=sources_for_prompt(batch.prospects), competitor_sources=sources_for_prompt(batch.competitors)),
-        max_tokens=4600,
+        context(product=public_product(product), approved_icp=icp.fields.model_dump(), excluded_domains=exclude_domains,
+                prospect_sources=sources_for_prompt(prospects), competitor_sources=sources_for_prompt(batch.competitors)),
+        max_tokens=7200 if account_limit == MAX_DISCOVERY_ACCOUNTS else 5600,
+        wrap_json=True,
     )
     now = utcnow()
     by_domain = {}
-    for candidate in out.accounts[:8]:
-        if account := make_account(candidate, icp, sources, now):
+    for candidate in out.accounts[:account_limit + 1]:
+        if (account := make_account(candidate, icp, sources, now)) and account.domain not in exclude_domains:
             previous = by_domain.get(account.domain)
             if not previous or (account.negative_signal is not None, account.fit_score, account.intent_score) > (
                 previous.negative_signal is not None, previous.fit_score, previous.intent_score,
             ):
                 by_domain[account.domain] = account
     ranked = sorted(by_domain.values(), key=lambda a: (a.tier, -a.fit_score, -a.intent_score, a.name))
-    contrast = next((a for a in ranked if a.recommendation != 'contact'), None)
-    selected = ranked[:3]
-    if contrast and contrast not in selected:
-        selected[-1] = contrast
     competitors = {}
     names = set()
     for candidate in out.competitors + ([out.competitor] if out.competitor else []):
@@ -477,7 +491,7 @@ def analyze_research(providers: Providers, product: Product, icp: Icp, batch: Re
         if competitor and competitor.category not in competitors and competitor.name.casefold() not in names:
             competitors[competitor.category] = competitor
             names.add(competitor.name.casefold())
-    return selected, [competitors[category] for category in ('direct', 'indirect', 'alternative') if category in competitors]
+    return ranked[:account_limit], [competitors[category] for category in ('direct', 'indirect', 'alternative') if category in competitors]
 
 
 def check_copy(providers: Providers, product: Product, evidence: list[Evidence], subject: str, body: str) -> None:

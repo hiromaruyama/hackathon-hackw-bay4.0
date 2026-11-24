@@ -257,6 +257,7 @@ export interface Workspace {
   pipeline: Pipeline;
   usage: Usage | null;
   research_schedule?: { interval_minutes: number; last_completed_at: string | null; next_due_at: string | null } | null;
+  more_accounts_available?: boolean;
 }
 
 export interface IcpGenerateInput {
