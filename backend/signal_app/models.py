@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=250)]
@@ -16,8 +16,13 @@ DraftStatus = Literal['pending_review', 'approved', 'rejected']
 DispatchStatus = Literal['not_sent', 'pending_outcome', 'sent', 'failed']
 EnrichmentStatus = Literal['not_started', 'verified', 'uncertain', 'not_found', 'failed']
 PipelineStage = Literal['matched', 'contacted', 'replied', 'meeting_booked', 'closed_lost']
+PipelineOutcome = Literal['won', 'lost']
+PipelineAction = Literal['send', 'reply', 'bounce', 'meeting', 'close']
+PipelineSource = Literal['gmail', 'rep']
 SignalKind = Literal['direct', 'indirect', 'weak']
 SynthesisMode = Literal['claude', 'grounded_template']
+OutreachChannel = Literal['email', 'linkedin']
+MessageVariant = Literal['A', 'B']
 UsageOperation = Literal['leads_enriched', 'graph_query_evaluated', 'outreach_sent']
 
 
@@ -68,8 +73,15 @@ class IntakeReply(InputModel):
     proposal: IntakeFields = Field(default_factory=IntakeFields)
 
 
+class IndustryCode(InputModel):
+    system: Literal['NAICS', 'SIC']
+    code: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r'^[0-9]{2,6}(?:-[0-9]{2})?$')]
+    title: ShortText | None = None
+
+
 class IcpFields(InputModel):
     industries: TextList = Field(default_factory=list)
+    industry_codes: list[IndustryCode] = Field(default_factory=list, max_length=12)
     geography: TextList = Field(default_factory=list)
     headcount_band: ShortText | None = None
     revenue_band: ShortText | None = None
@@ -111,6 +123,7 @@ class ResearchBatch(BaseModel):
     competitors: list[Source]
     nexla_status: str | None = None
     focused_search_used: bool = False
+    deeper_sources: bool = False
 
 
 class Expansion(BaseModel):
@@ -142,6 +155,7 @@ class RevisionInput(InputModel):
 
 class DiscoverInput(RevisionInput):
     refresh: bool = False
+    deeper_sources: bool = False
 
 
 class EditDraft(InputModel):
@@ -152,6 +166,10 @@ class EditDraft(InputModel):
 
 class ReviewDraft(RevisionInput):
     decision: Literal['approve', 'reject']
+
+
+class ScheduleDraft(RevisionInput):
+    scheduled_at: AwareDatetime | None
 
 
 class Signal(BaseModel):
@@ -166,6 +184,27 @@ class NegativeSignal(BaseModel):
     reason: str
     evidence_id: str
     hard_exclusion: bool
+
+
+class PublicAffiliation(BaseModel):
+    person: str
+    organization: str
+    kind: Literal['employment', 'education']
+    evidence_id: str
+
+
+class MarketSignal(BaseModel):
+    id: str
+    kind: Literal['buying_evaluation', 'renewal', 'churn']
+    vendor: str | None = None
+    evidence_id: str
+    observed_on: date | None = None
+
+
+class GraphInsight(BaseModel):
+    kind: Literal['employment', 'education', 'warm_introduction', 'buying_evaluation', 'renewal', 'churn']
+    path: list[str]
+    evidence: list[Evidence]
 
 
 class GraphStep(BaseModel):
@@ -192,6 +231,7 @@ class Competitor(BaseModel):
     differentiator: str
     pricing: str | None = None
     evidence: list[Evidence]
+    category: Literal['direct', 'indirect', 'alternative'] = 'direct'
 
 
 class DraftView(BaseModel):
@@ -207,6 +247,12 @@ class DraftView(BaseModel):
     review_status: DraftStatus
     dispatch_status: DispatchStatus
     updated_at: datetime
+    channel: OutreachChannel = 'email'
+    sequence_step: int = 1
+    message_variant: MessageVariant | None = None
+    value_proposition: str | None = None
+    scheduled_at: datetime | None = None
+    prepared_at: datetime | None = None
 
 
 class Account(BaseModel):
@@ -231,6 +277,9 @@ class Account(BaseModel):
     enrichment_status: EnrichmentStatus = 'not_started'
     contact: Contact | None = None
     draft: DraftView | None = None
+    sequence: list[DraftView] = Field(default_factory=list)
+    affiliations: list[PublicAffiliation] = Field(default_factory=list)
+    market_signals: list[MarketSignal] = Field(default_factory=list)
 
 
 class Activity(BaseModel):
@@ -254,18 +303,41 @@ class Lead(BaseModel):
     actor: str
     updated_at: datetime
     next_action: str
+    industry: str | None = None
+    tier: Literal['A', 'B', 'C'] | None = None
+    outcome: PipelineOutcome | None = None
+    bounced: bool = False
+    message_variant: str | None = None
+    channel: str | None = None
+    value_proposition: str | None = None
 
 
 class PipelineEvent(BaseModel):
     id: str
     account_id: str
-    draft_id: str
-    revision: int
+    draft_id: str | None = None
+    revision: int | None = None
     from_stage: PipelineStage
     to_stage: PipelineStage
     actor: str
     at: datetime
     test_send: bool = True
+    action: PipelineAction = 'send'
+    source: PipelineSource = 'gmail'
+    note: str | None = None
+    outcome: PipelineOutcome | None = None
+
+
+class PipelineChange(InputModel):
+    expected_stage: PipelineStage
+    to_stage: Literal['replied', 'meeting_booked', 'closed_lost']
+    note: ShortText | None = None
+    outcome: PipelineOutcome | None = None
+
+
+class FunnelGroup(BaseModel):
+    label: str
+    reached: dict[PipelineStage, int]
 
 
 class Pipeline(BaseModel):
@@ -275,6 +347,8 @@ class Pipeline(BaseModel):
     enriched_count: int
     pending_approval_count: int
     matched_to_contacted_rate: float | None
+    analytics: dict[str, list[FunnelGroup]] = Field(default_factory=dict)
+    gmail_feedback_configured: bool = False
 
 
 class UsageEvent(BaseModel):
@@ -295,15 +369,23 @@ class Usage(BaseModel):
     events: list[UsageEvent] = Field(default_factory=list)
 
 
+class ResearchSchedule(BaseModel):
+    interval_minutes: int
+    last_completed_at: datetime | None = None
+    next_due_at: datetime | None = None
+
+
 class Workspace(BaseModel):
     product: Product | None
     icp: Icp | None
     approved_icp_revision: int | None
     accounts: list[Account]
     competitor: Competitor | None
+    competitors: list[Competitor] = Field(default_factory=list)
     activity: list[Activity]
     pipeline: Pipeline
     usage: Usage | None
+    research_schedule: ResearchSchedule | None = None
 
 
 class DraftRevision(BaseModel):
@@ -316,6 +398,9 @@ class DraftRevision(BaseModel):
     synthesis_mode: SynthesisMode = 'claude'
     actor: str
     at: datetime
+    channel: OutreachChannel = 'email'
+    message_variant: MessageVariant | None = None
+    value_proposition: str | None = None
 
 
 class DraftReview(BaseModel):
@@ -342,6 +427,9 @@ class Draft(BaseModel):
     revisions: list[DraftRevision]
     reviews: list[DraftReview] = Field(default_factory=list)
     dispatch: DispatchAttempt | None = None
+    sequence_step: int = 1
+    scheduled_at: datetime | None = None
+    prepared_at: datetime | None = None
 
     @property
     def current(self) -> DraftRevision:
@@ -361,6 +449,8 @@ class Draft(BaseModel):
             synthesis_mode=self.current.synthesis_mode,
             review_status=review_status, dispatch_status=self.dispatch.status if self.dispatch else 'not_sent',
             updated_at=(self.dispatch.finished_at or self.dispatch.at) if self.dispatch else review.at if review else self.current.at,
+            channel=self.current.channel, sequence_step=self.sequence_step, message_variant=self.current.message_variant,
+            value_proposition=self.current.value_proposition, scheduled_at=self.scheduled_at, prepared_at=self.prepared_at,
         )
 
 
@@ -370,8 +460,11 @@ class State(BaseModel):
     approved_icp_revision: int | None = None
     discovery_revision: int | None = None
     research_batch: ResearchBatch | None = None
+    research_completed_at: datetime | None = None
+    research_scheduled_attempt_at: datetime | None = None
     accounts: list[Account] = Field(default_factory=list)
     competitor: Competitor | None = None
+    competitors: list[Competitor] = Field(default_factory=list)
     activity: list[Activity] = Field(default_factory=list)
     leads: dict[str, Lead] = Field(default_factory=dict)
     pipeline_events: list[PipelineEvent] = Field(default_factory=list)

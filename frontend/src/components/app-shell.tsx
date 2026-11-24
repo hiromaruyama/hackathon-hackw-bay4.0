@@ -2,15 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
-import { Bot, Building2, Home, KanbanSquare, PenLine, RefreshCw, Share2, Target } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Activity, Bot, Building2, Home, KanbanSquare, PenLine, RefreshCw, Share2, Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { InlineAlert } from "@/components/signal";
+import { ActivityList, InlineAlert } from "@/components/signal";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { VoiceAssistant } from "@/components/voice-assistant";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -39,6 +41,7 @@ export function AppShell({ commands, children }: { commands?: React.ReactNode; c
           Signal
         </Link>
         <div className="ml-auto flex items-center gap-3">
+          {status === "ready" && workspace ? <ActivitySheet /> : null}
           <ThemeToggle />
           {mode === "sample" ? (
             <Badge variant="outline">Sample data</Badge>
@@ -92,6 +95,34 @@ export function AppShell({ commands, children }: { commands?: React.ReactNode; c
         </div>
       </div>
     </div>
+  );
+}
+
+function ActivitySheet() {
+  const { workspace, mode, pending, refresh } = useWorkspace();
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open || mode === "sample" || pending) return;
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [open, mode, pending, refresh]);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <Button variant="ghost" size="sm"><Activity data-icon="inline-start" />Activity</Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="gap-0">
+        <SheetHeader>
+          <SheetTitle>Workspace activity</SheetTitle>
+          <SheetDescription>Recorded research, graph checks, review decisions, and provider outcomes.</SheetDescription>
+        </SheetHeader>
+        <ScrollArea className="min-h-0 flex-1 px-4 pb-4">
+          <ActivityList events={workspace?.activity ?? []} />
+        </ScrollArea>
+      </SheetContent>
+    </Sheet>
   );
 }
 

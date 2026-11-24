@@ -14,6 +14,7 @@
     "approved": true,
     "fields": {
       "industries": ["Renewable energy project development"],
+      "industry_codes": [{"system":"NAICS","code":"221114","title":"Solar Electric Power Generation"}],
       "geography": ["United States"],
       "headcount_band": "50–500",
       "revenue_band": null,

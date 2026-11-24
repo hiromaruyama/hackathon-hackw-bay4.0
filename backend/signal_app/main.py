@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from secrets import compare_digest, token_urlsafe
 from typing import Annotated
@@ -13,8 +15,8 @@ from starlette.staticfiles import StaticFiles
 from .config import Settings
 from .errors import SignalError
 from .models import (
-    ApproveIcp, DiscoverInput, EditDraft, InputModel, IntakeChat, IntakeReply, ProductInput,
-    ReviewDraft, RevisionInput, Workspace,
+    ApproveIcp, DiscoverInput, EditDraft, GraphInsight, InputModel, IntakeChat, IntakeReply, PipelineChange, ProductInput,
+    ReviewDraft, RevisionInput, ScheduleDraft, Workspace,
 )
 from .providers import Providers
 from .research import guide_intake
@@ -50,11 +52,29 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     providers = providers or Providers(settings)
     workflow = Workflow(settings, store, providers)
 
+    async def refresh_public_signals(stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            try:
+                await asyncio.to_thread(workflow.refresh_research_due)
+            except SignalError as error:
+                logging.getLogger(__name__).warning('Scheduled research refresh returned %s', error.code)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=60)
+            except TimeoutError:
+                pass
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        yield
-        providers.close()
-        store.close()
+        stop = asyncio.Event()
+        refresh = asyncio.create_task(refresh_public_signals(stop)) if settings.research_refresh_minutes else None
+        try:
+            yield
+        finally:
+            stop.set()
+            if refresh:
+                await refresh
+            providers.close()
+            store.close()
 
     app = FastAPI(title='Signal API', version='1.0', docs_url='/api/docs', openapi_url='/api/openapi.json', lifespan=lifespan)
     app.state.settings = settings
@@ -120,6 +140,7 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
             'claude_configured': bool(settings.anthropic_api_key), 'tavily_configured': bool(settings.tavily_api_key),
             'hunter_configured': bool(settings.hunter_api_key), 'neo4j_configured': bool(settings.neo4j_uri),
             'neo4j_reachable': store.check(), 'gmail_configured': settings.gmail_configured,
+            'gmail_feedback_configured': settings.gmail_feedback_configured,
             'flexprice_enabled': settings.flexprice_enabled, 'flexprice_configured': settings.flexprice_configured,
             'nexla_configured': bool(settings.nexla_sync_url and settings.nexla_access_token),
         }
@@ -142,11 +163,19 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
 
     @app.post('/api/discover')
     def discover(body: DiscoverInput, actor: Actor) -> Workspace:
-        return workflow.discover(body.revision, actor, refresh=body.refresh)
+        return workflow.discover(body.revision, actor, refresh=body.refresh, deeper_sources=body.deeper_sources)
 
     @app.post('/api/accounts/{account_id}/draft')
     def create_draft(account_id: str, actor: Actor) -> Workspace:
         return workflow.create_draft(account_id, actor)
+
+    @app.get('/api/accounts/{account_id}/insights')
+    def graph_insights(account_id: str, actor: Actor) -> list[GraphInsight]:
+        return workflow.graph_insights(account_id)
+
+    @app.post('/api/accounts/{account_id}/sequence')
+    def create_sequence(account_id: str, actor: Actor) -> Workspace:
+        return workflow.create_sequence(account_id, actor)
 
     @app.patch('/api/drafts/{draft_id}')
     def edit_draft(draft_id: str, body: EditDraft, actor: Actor) -> Workspace:
@@ -159,6 +188,22 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     @app.post('/api/drafts/{draft_id}/send')
     def send_draft(draft_id: str, body: RevisionInput, actor: Actor) -> Workspace:
         return workflow.send_draft(draft_id, body.revision, actor)
+
+    @app.post('/api/drafts/{draft_id}/schedule')
+    def schedule_draft(draft_id: str, body: ScheduleDraft, actor: Actor) -> Workspace:
+        return workflow.schedule_draft(draft_id, body, actor)
+
+    @app.post('/api/drafts/{draft_id}/linkedin-handoff')
+    def prepare_linkedin(draft_id: str, body: RevisionInput, actor: Actor) -> Workspace:
+        return workflow.prepare_linkedin(draft_id, body.revision, actor)
+
+    @app.post('/api/pipeline/{account_id}/stage')
+    def move_pipeline(account_id: str, body: PipelineChange, actor: Actor) -> Workspace:
+        return workflow.change_pipeline(account_id, body, actor)
+
+    @app.post('/api/feedback/gmail/sync')
+    def gmail_feedback(actor: Actor) -> Workspace:
+        return workflow.sync_gmail_feedback()
 
     if settings.static_dir.is_dir():
         app.mount('/', StaticFiles(directory=settings.static_dir, html=True), name='workspace-ui')

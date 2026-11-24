@@ -8,6 +8,7 @@ export type ReviewStatus = "pending_review" | "approved" | "rejected";
 export type DispatchStatus = "not_sent" | "pending_outcome" | "sent" | "failed";
 export type ExpansionDecision = "accept" | "edit" | "dismiss";
 export type Stage = "matched" | "contacted" | "replied" | "meeting_booked" | "closed_lost";
+export type Outcome = "won" | "lost";
 
 export interface Product {
   id: string;
@@ -22,6 +23,7 @@ export interface Product {
 
 export interface IcpFields {
   industries: string[];
+  industry_codes?: IndustryCode[];
   geography: string[];
   headcount_band: string | null;
   revenue_band: string | null;
@@ -29,6 +31,12 @@ export interface IcpFields {
   seniority: string[];
   triggers: string[];
   exclusions: string[];
+}
+
+export interface IndustryCode {
+  system: "NAICS" | "SIC";
+  code: string;
+  title?: string | null;
 }
 
 export type IcpFieldKey = keyof IcpFields;
@@ -80,6 +88,12 @@ export interface GraphNode {
   evidence_id: string | null;
 }
 
+export interface GraphInsight {
+  kind: "employment" | "education" | "warm_introduction" | "buying_evaluation" | "renewal" | "churn";
+  path: string[];
+  evidence: Evidence[];
+}
+
 export interface Contact {
   id: string;
   role: string;
@@ -103,6 +117,12 @@ export interface Draft {
   review_status: ReviewStatus;
   dispatch_status: DispatchStatus;
   updated_at: string;
+  channel?: "email" | "linkedin";
+  sequence_step?: number;
+  message_variant?: "A" | "B" | null;
+  value_proposition?: string | null;
+  scheduled_at?: string | null;
+  prepared_at?: string | null;
 }
 
 export interface Account {
@@ -127,6 +147,7 @@ export interface Account {
   enrichment_status: EnrichmentStatus;
   contact: Contact | null;
   draft: Draft | null;
+  sequence?: Draft[];
 }
 
 export interface Competitor {
@@ -135,6 +156,7 @@ export interface Competitor {
   differentiator: string;
   pricing: string | null;
   evidence: Evidence[];
+  category?: "direct" | "indirect" | "alternative";
 }
 
 export interface ActivityEvent {
@@ -158,6 +180,13 @@ export interface Lead {
   actor: string;
   updated_at: string;
   next_action: string | null;
+  industry?: string | null;
+  tier?: Tier | null;
+  outcome?: Outcome | null;
+  bounced?: boolean;
+  message_variant?: string | null;
+  channel?: string | null;
+  value_proposition?: string | null;
 }
 
 export interface PipelineEvent {
@@ -168,6 +197,22 @@ export interface PipelineEvent {
   test_send: boolean;
   actor: string;
   at: string;
+  action?: "send" | "reply" | "bounce" | "meeting" | "close";
+  source?: "gmail" | "rep";
+  note?: string | null;
+  outcome?: Outcome | null;
+}
+
+export interface PipelineChange {
+  expected_stage: Stage;
+  to_stage: "replied" | "meeting_booked" | "closed_lost";
+  note?: string;
+  outcome?: Outcome;
+}
+
+export interface FunnelGroup {
+  label: string;
+  reached: Record<Stage, number>;
 }
 
 export interface Pipeline {
@@ -177,6 +222,8 @@ export interface Pipeline {
   enriched_count: number;
   pending_approval_count: number;
   matched_to_contacted_rate: number | null;
+  analytics?: Record<string, FunnelGroup[]>;
+  gmail_feedback_configured?: boolean;
 }
 
 export interface UsageEvent {
@@ -203,9 +250,11 @@ export interface Workspace {
   approved_icp_revision: number | null;
   accounts: Account[];
   competitor: Competitor | null;
+  competitors?: Competitor[];
   activity: ActivityEvent[];
   pipeline: Pipeline;
   usage: Usage | null;
+  research_schedule?: { interval_minutes: number; last_completed_at: string | null; next_due_at: string | null } | null;
 }
 
 export interface IcpGenerateInput {

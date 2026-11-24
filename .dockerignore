@@ -1,0 +1,11 @@
+.git
+.playwright-mcp
+**/.env
+**/.env.*
+**/.venv
+**/node_modules
+**/.next
+**/out
+**/__pycache__
+**/.pytest_cache
+**/*.pyc

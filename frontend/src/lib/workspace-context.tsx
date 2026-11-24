@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { api, ApiError } from "./api";
 import { sampleWorkspace } from "./fixture";
 import { simulate } from "./sample-actions";
-import type { Account, IcpApproveInput, IcpGenerateInput, Signal, Workspace } from "./types";
+import type { Account, IcpApproveInput, IcpGenerateInput, PipelineChange, Signal, Workspace } from "./types";
 
 export type DataMode = "live" | "sample";
 type LoadStatus = "loading" | "ready" | "error" | "signin";
@@ -63,11 +63,16 @@ interface WorkspaceState {
   signIn: (password: string) => Promise<ActionResult>;
   generateIcp: (input: IcpGenerateInput) => Promise<ActionResult>;
   approveIcp: (input: IcpApproveInput) => Promise<ActionResult>;
-  discover: (refresh?: boolean) => Promise<ActionResult>;
+  discover: (refresh?: boolean, deeperSources?: boolean) => Promise<ActionResult>;
   writeDraft: (accountId: string) => Promise<ActionResult>;
+  writeSequence: (accountId: string) => Promise<ActionResult>;
   saveDraft: (draftId: string, expected: number, subject: string, body: string) => Promise<ActionResult>;
   review: (draftId: string, revision: number, decision: "approve" | "reject") => Promise<ActionResult>;
   send: (draftId: string, revision: number) => Promise<ActionResult>;
+  schedule: (draftId: string, revision: number, scheduledAt: string | null) => Promise<ActionResult>;
+  prepareLinkedIn: (draftId: string, revision: number) => Promise<ActionResult>;
+  moveLead: (accountId: string, change: PipelineChange) => Promise<ActionResult>;
+  syncFeedback: () => Promise<ActionResult>;
 }
 
 const Ctx = createContext<WorkspaceState | null>(null);
@@ -168,14 +173,15 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         run("icp-generate", () => api.generateIcp(input), (w) => simulate.generateIcp(w, input), "Profile generated"),
       approveIcp: (input) =>
         run("icp-approve", () => api.approveIcp(input), (w) => simulate.approveIcp(w, input), `Profile revision ${input.revision + 1} approved`),
-      discover: (refreshResults = false) =>
+      discover: (refreshResults = false, deeperSources = false) =>
         run(
           "discover",
-          () => api.discover(workspace?.approved_icp_revision ?? 0, refreshResults),
+          () => api.discover(workspace?.approved_icp_revision ?? 0, refreshResults, deeperSources),
           (w) => simulate.discover(w),
           "Accounts saved",
         ),
       writeDraft: (accountId) => run(`draft-${accountId}`, () => api.draft(accountId), (w) => simulate.draft(w, accountId), "Draft written"),
+      writeSequence: (accountId) => run("sequence", () => api.sequence(accountId), (w) => w, "Follow-up drafts saved"),
       saveDraft: (draftId, expected, subject, body) =>
         run("draft-save", () => api.saveDraft(draftId, expected, subject, body), (w) => simulate.saveDraft(w, draftId, expected, subject, body), `Saved as revision ${expected + 1}`),
       review: (draftId, revision, decision) =>
@@ -186,6 +192,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           decision === "approve" ? `Revision ${revision} approved` : `Revision ${revision} rejected`,
         ),
       send: (draftId, revision) => run("send", () => api.send(draftId, revision), (w) => simulate.send(w, draftId, revision)),
+      schedule: (draftId, revision, scheduledAt) => run("schedule", () => api.schedule(draftId, revision, scheduledAt), (w) => w, "Schedule saved"),
+      prepareLinkedIn: (draftId, revision) => run("linkedin-handoff", () => api.prepareLinkedIn(draftId, revision), (w) => w),
+      moveLead: (accountId, change) => run("move-lead", () => api.moveLead(accountId, change), (w) => w, "Lead updated"),
+      syncFeedback: () => run("sync-feedback", api.syncFeedback, (w) => w, "Gmail feedback checked"),
     }),
     [mode, status, workspace, loadError, pending, refresh, run],
   );

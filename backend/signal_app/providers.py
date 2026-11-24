@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from email.message import EmailMessage
-from email.utils import parsedate_to_datetime
+from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 from hashlib import sha256
-from typing import TypeVar
+from typing import Literal, TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
 import anthropic
@@ -95,6 +95,23 @@ class Enriched:
 class Delivery:
     status: str
     provider_message_id: str | None = None
+
+
+@dataclass(frozen=True)
+class GmailFeedback:
+    id: str
+    kind: Literal['reply', 'bounce']
+
+
+def gmail_headers(message: dict) -> dict[str, str]:
+    payload = message.get('payload')
+    entries = payload.get('headers') if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return {}
+    return {
+        header['name'].casefold(): header['value'] for header in entries
+        if isinstance(header, dict) and isinstance(header.get('name'), str) and isinstance(header.get('value'), str)
+    }
 
 
 class Providers:
@@ -255,19 +272,68 @@ class Providers:
     def gmail_access_token(self) -> str:
         if not self.settings.gmail_configured:
             raise ProviderError('Gmail', 'OAuth settings or the controlled test recipient are missing.', 503)
+        return self._gmail_token(self.settings.gmail_refresh_token)
+
+    def _gmail_token(self, refresh_token: str) -> str:
         payload = self._json(
             'Gmail', 'POST', 'https://oauth2.googleapis.com/token',
             data={'client_id': self.settings.gmail_client_id, 'client_secret': self.settings.gmail_client_secret,
-                  'refresh_token': self.settings.gmail_refresh_token, 'grant_type': 'refresh_token'},
+                  'refresh_token': refresh_token, 'grant_type': 'refresh_token'},
         )
         token = payload.get('access_token') if isinstance(payload, dict) else None
         if not isinstance(token, str) or not token:
             raise ProviderError('Gmail', 'did not issue an access token.')
         return token
 
+    def gmail_feedback(self, message_ids: list[str]) -> dict[str, list[GmailFeedback]]:
+        if not self.settings.gmail_feedback_configured:
+            raise ProviderError('Gmail', 'requires the controlled mailbox metadata refresh token.', 503)
+        token = self._gmail_token(self.settings.gmail_feedback_refresh_token)
+        headers = {'Authorization': f'Bearer {token}'}
+        base = 'https://gmail.googleapis.com/gmail/v1/users/me'
+        metadata = [('format', 'metadata')] + [('metadataHeaders', name) for name in (
+            'From', 'To', 'Message-ID', 'In-Reply-To', 'References', 'Original-Message-ID',
+            'X-Failed-Recipients', 'Auto-Submitted',
+        )]
+        recipient = self.settings.test_recipient
+        result: dict[str, list[GmailFeedback]] = {}
+        threads: dict[str, dict] = {}
+        for message_id in message_ids[:8]:
+            if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', message_id):
+                continue
+            original = self._json('Gmail', 'GET', f'{base}/messages/{message_id}', headers=headers, params=metadata)
+            if not isinstance(original, dict):
+                raise ProviderError('Gmail', 'returned invalid message metadata.')
+            source = gmail_headers(original)
+            thread_id, original_id = original.get('threadId'), source.get('message-id')
+            to_addresses = {mailbox(address) for _, address in getaddresses([source.get('to', '')])}
+            if not isinstance(thread_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', thread_id) or not original_id or recipient not in to_addresses:
+                continue
+            if thread_id not in threads:
+                thread = self._json('Gmail', 'GET', f'{base}/threads/{thread_id}', headers=headers, params=metadata)
+                if not isinstance(thread, dict) or not isinstance(thread.get('messages'), list):
+                    raise ProviderError('Gmail', 'returned invalid thread metadata.')
+                threads[thread_id] = thread
+            for candidate in threads[thread_id]['messages'][-50:]:
+                if not isinstance(candidate, dict) or not isinstance(candidate.get('id'), str) or candidate['id'] == message_id:
+                    continue
+                if 'INBOX' not in (candidate.get('labelIds') or []):
+                    continue
+                entry = gmail_headers(candidate)
+                referenced = ' '.join(entry.get(name, '') for name in ('in-reply-to', 'references', 'original-message-id'))
+                if original_id not in re.findall(r'<[^<>\s]+>', referenced):
+                    continue
+                sender = mailbox(parseaddr(entry.get('from', ''))[1])
+                failed = {mailbox(address) for _, address in getaddresses([entry.get('x-failed-recipients', '')])}
+                if sender and sender.split('@', 1)[0] == 'mailer-daemon' and recipient in failed:
+                    result.setdefault(message_id, []).append(GmailFeedback(candidate['id'], 'bounce'))
+                elif sender == recipient and entry.get('auto-submitted', 'no').casefold() == 'no':
+                    result.setdefault(message_id, []).append(GmailFeedback(candidate['id'], 'reply'))
+        return result
+
     def send(self, approved: DraftRevision) -> Delivery:
         # Recheck here so the transport is safe even if used outside the HTTP route.
-        if approved.test_recipient != self.settings.test_recipient or approved.test_recipient in self.settings.suppressed_recipients:
+        if approved.channel != 'email' or approved.test_recipient != self.settings.test_recipient or approved.test_recipient in self.settings.suppressed_recipients:
             return Delivery('failed')
         try:
             token = self.gmail_access_token()

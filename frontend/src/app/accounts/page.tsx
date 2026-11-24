@@ -7,10 +7,12 @@ import { AccountsTable } from "@/components/accounts-table";
 import { AppShell } from "@/components/app-shell";
 import { EvidenceList, InlineAlert, Panel, PanelHeader } from "@/components/signal";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ApiError } from "@/lib/api";
+import { dateTime } from "@/lib/format";
 import { useWorkspace } from "@/lib/workspace-context";
 
 export default function AccountsPage() {
@@ -27,10 +29,12 @@ function Accounts() {
   const [error, setError] = useState<ApiError | null>(null);
   const searching = pending === "discover";
   const approved = w.approved_icp_revision;
+  const competitors = w.competitors ?? (w.competitor ? [w.competitor] : []);
+  const [deeper, setDeeper] = useState(false);
 
   async function run(refresh: boolean) {
     setError(null);
-    const res = await discover(refresh);
+    const res = await discover(refresh, deeper);
     if (!res.ok) setError(res.error ?? null);
   }
 
@@ -58,6 +62,16 @@ function Accounts() {
           </div>
         ) : null}
       </div>
+
+      {approved ? (
+        <label className="flex items-center gap-2 self-start text-sm">
+          <input type="checkbox" checked={deeper} disabled={searching} onChange={(event) => setDeeper(event.target.checked)} />
+          Include targeted filings and job searches
+        </label>
+      ) : null}
+      {w.research_schedule?.interval_minutes && w.research_schedule.next_due_at ? (
+        <p className="text-sm text-muted-foreground">Next scheduled research refresh {dateTime(w.research_schedule.next_due_at)} Pacific.</p>
+      ) : null}
 
       {error ? (
         <InlineAlert
@@ -107,27 +121,27 @@ function Accounts() {
         <Tabs defaultValue="accounts" className="gap-4">
           <TabsList>
             <TabsTrigger value="accounts">Accounts</TabsTrigger>
-            <TabsTrigger value="competitor">Competitor</TabsTrigger>
+            <TabsTrigger value="competitor">Competitors</TabsTrigger>
           </TabsList>
           <TabsContent value="accounts">
             <AccountsTable workspace={w} />
           </TabsContent>
           <TabsContent value="competitor">
-            <Panel>
-              {w.competitor ? (
-                <div className="flex flex-col gap-4">
-                  <PanelHeader title={w.competitor.name} />
+            <div className="flex flex-col gap-4">
+              {competitors.length ? competitors.map((competitor) => (
+                <Panel key={competitor.name} className="flex flex-col gap-4">
+                  <PanelHeader title={competitor.name}>
+                    <Badge variant="secondary" className="capitalize">{competitor.category ?? "direct"}</Badge>
+                  </PanelHeader>
                   <dl className="grid gap-4 sm:grid-cols-3">
-                    <div><dt className="text-sm text-muted-foreground">Positioning</dt><dd>{w.competitor.positioning}</dd></div>
-                    <div><dt className="text-sm text-muted-foreground">How GeoFlow differs</dt><dd>{w.competitor.differentiator}</dd></div>
-                    <div><dt className="text-sm text-muted-foreground">Public pricing</dt><dd>{w.competitor.pricing ?? "Unknown"}</dd></div>
+                    <div><dt className="text-sm text-muted-foreground">Positioning</dt><dd>{competitor.positioning}</dd></div>
+                    <div><dt className="text-sm text-muted-foreground">How {w.product?.name ?? "the product"} differs</dt><dd>{competitor.differentiator}</dd></div>
+                    <div><dt className="text-sm text-muted-foreground">Public pricing</dt><dd>{competitor.pricing ?? "Unknown"}</dd></div>
                   </dl>
-                  <EvidenceList evidence={w.competitor.evidence} />
-                </div>
-              ) : (
-                <p className="text-muted-foreground">No competitor was found with enough public evidence. Signal doesn't list one without a source.</p>
-              )}
-            </Panel>
+                  <EvidenceList evidence={competitor.evidence} />
+                </Panel>
+              )) : <Panel><p className="text-muted-foreground">No competitor was found with enough public evidence.</p></Panel>}
+            </div>
           </TabsContent>
         </Tabs>
       )}

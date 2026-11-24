@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { GraphInsights } from "@/components/graph-insights";
 import { EvidenceList, Panel } from "@/components/signal";
 import { Input } from "@/components/ui/input";
 import { verdictLabel } from "@/lib/format";
@@ -117,11 +118,11 @@ function buildGraph(w: Workspace) {
     }
   }
 
-  if (w.competitor) {
-    const id = "competitor";
-    w.competitor.evidence.forEach((e) => evidence.set(e.id, e));
-    nodes.set(id, { id, type: "competitor", label: w.competitor.name, meta: w.competitor.positioning });
-    addEdge({ from: id, to: productId, rel: "COMPETES_WITH", saved: false, evidenceId: w.competitor.evidence[0]?.id ?? null });
+  for (const competitor of w.competitors ?? (w.competitor ? [w.competitor] : [])) {
+    const id = `competitor-${competitor.name}`;
+    competitor.evidence.forEach((e) => evidence.set(e.id, e));
+    nodes.set(id, { id, type: "competitor", label: competitor.name, meta: competitor.positioning });
+    addEdge({ from: productId, to: id, rel: "COMPETES_WITH", saved: Boolean(w.competitors?.length), evidenceId: competitor.evidence[0]?.id ?? null });
   }
 
   return { nodes: [...nodes.values()], edges: [...edges.values()], evidence, productId };
@@ -193,7 +194,7 @@ const sizeOf = (n: GNode) => {
 // ---------- View ----------
 
 function Explorer() {
-  const { workspace } = useWorkspace();
+  const { workspace, mode } = useWorkspace();
   const w = workspace!;
   const { nodes, edges, evidence, productId } = useMemo(() => buildGraph(w), [w]);
   const pos = useMemo(() => layout(nodes, edges, productId), [nodes, edges, productId]);
@@ -432,6 +433,7 @@ function Explorer() {
                 <h3 className="mb-1.5 text-sm font-semibold">Sources</h3>
                 {selEvidence.length ? <EvidenceList evidence={selEvidence} numbered={false} /> : <p className="text-sm text-muted-foreground">No source is attached to these edges.</p>}
               </div>
+              {selNode.accountId && mode === "live" ? <GraphInsights key={selNode.accountId} accountId={selNode.accountId} /> : null}
             </>
           ) : (
             <>

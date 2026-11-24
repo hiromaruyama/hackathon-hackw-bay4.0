@@ -23,6 +23,8 @@ Fill `backend/.env` locally. The file is ignored by Git. Restart the service aft
 | Hunter | `HUNTER_API_KEY`. Draft for a Contact-tier account and verify the reported role and provider status. |
 | Neo4j | `NEO4J_URI`, `NEO4J_USERNAME`, and `NEO4J_PASSWORD`. Aura's **Inspect → Overview → Connection URI** gives the `neo4j+s://` value. Leave `NEO4J_DATABASE` blank for the instance default. Set it only when a named database should be selected explicitly. |
 | Gmail | Enable the Gmail API in a Google Cloud project. Authorize the controlled sender with `gmail.send` and offline OAuth access. Set `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_SENDER_ADDRESS`, and `SIGNAL_TEST_RECIPIENT`. The test recipient should be a mailbox the team controls. Use a comma-delimited `SIGNAL_SUPPRESSED_RECIPIENTS` to block configured addresses. |
+| Gmail feedback | Authorize the same controlled sender separately with `https://www.googleapis.com/auth/gmail.metadata`. Save the new refresh token as `GMAIL_FEEDBACK_REFRESH_TOKEN`. The Pipeline sync action reads headers from recorded test threads and records matched replies and bounces. |
+| LinkedIn handoff | Set `SIGNAL_LINKEDIN_TEST_PROFILE_URL` to the controlled test profile. Each LinkedIn draft is reviewed and scheduled independently. The UI records an approved handoff and opens the configured profile. Automated API delivery requires approved LinkedIn messaging access. |
 | Flexprice | Follow the [Sandbox setup](#flexprice-sandbox) and enable it after the wallet and meters are ready. |
 | Nexla | If provisioned, set `NEXLA_SYNC_URL` to the HTTPS Nexset Sync endpoint and `NEXLA_ACCESS_TOKEN` to its Sync API key. The source must be read-only and return a list, or a `data`/`records` list, with `url` or `source_url`, `title`, `content` or `excerpt`, and an optional `published_at`. Scope it to at most the small demo dataset. |
 
@@ -44,6 +46,8 @@ The workspace shows the most recent Flexprice balance and the remaining allowanc
 ## Deployment handoff
 
 Build Next.js with `output: 'export'`. For multiple page routes, set `trailingSlash: true` so FastAPI can serve each route's `index.html`. Copy the exported files into the backend runtime and set `SIGNAL_STATIC_DIR` to that directory at startup. FastAPI serves those files and the API on the same origin. Set the external HTTPS origin explicitly or let `RENDER_EXTERNAL_URL` supply it. Run Uvicorn with one worker on `0.0.0.0` and Render's assigned port. Set credentials as deployment secrets. Keep Neo4j as the persistent store and provide judge sign-in privately. [Next.js static export configuration](https://nextjs.org/docs/app/guides/static-exports#configuration)
+
+The root Dockerfile builds both tiers. The Render setup uses a free web service and checks `/api/health`. Set `SIGNAL_RESEARCH_REFRESH_MINUTES` to `1440` for daily research. The scheduler claims due refreshes in Neo4j and records the result under the system actor. Free services sleep while idle. The repository workflow can wake a deployed service using the public `SIGNAL_RENDER_URL` variable. [Render free service limits](https://render.com/docs/free)
 
 ## Data flow and approval boundary
 

@@ -1,7 +1,7 @@
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from threading import Event
 from uuid import uuid4
@@ -13,9 +13,10 @@ from signal_app.config import Settings
 from signal_app.errors import ProviderError
 from signal_app.main import create_app
 from signal_app.models import Contact, IntakeReply, Workspace
-from signal_app.providers import Delivery, Enriched, Source
-from signal_app.research import CopyCheck, CopyOutput, DiscoveryOutput, ProfileOutput
+from signal_app.providers import Delivery, Enriched, GmailFeedback, Source
+from signal_app.research import CopyCheck, CopyOutput, DiscoveryOutput, ProfileOutput, SequenceOutput
 from signal_app.store import Neo4jStore
+from signal_app.workflow import Workflow
 
 
 ORIGIN = 'http://localhost:8000'
@@ -42,6 +43,8 @@ class SimulatedProviders:
         self.searches = []
         self.graph_evidence_used = []
         self.intake_requests = []
+        self.feedback = {}
+        self.advanced_sources = False
         self.delivery = Delivery('sent', 'gmail-test-1')
         self.balance = Decimal('1')
         self.send_entered = Event()
@@ -64,12 +67,36 @@ class SimulatedProviders:
         ]
         self.competitor = Source('siting', 'https://siting.example.com/pricing', 'Siting Tool',
                                  'Siting Tool provides parcel screening. Its public plan starts at $29 per month.', None, 'tavily')
+        self.bios = [
+            Source('bright-bio', 'https://bright.example.com/team', 'Bright Energy leadership',
+                   'Alex Example currently works at Bright Energy and previously worked at Shared Grid. '
+                   'Alex Example of Bright Energy earned a degree from Harbor University.', self.recent, 'tavily'),
+            Source('west-bio', 'https://west.example.com/team', 'West Energy leadership',
+                   'Sam Example currently works at West Energy and previously worked at Shared Grid.', self.recent, 'tavily'),
+        ]
+        self.filing = Source('bright-filing', 'https://www.sec.gov/Archives/example/bright', 'Bright Energy filing',
+                             'Bright Energy will renew its GridTools contract. Bright Energy plans to replace OldScreen.', self.recent, 'tavily')
+        self.job = Source('bright-job', 'https://bright.example.com/jobs/site-analyst', 'Bright Energy job posting',
+                          'Bright Energy seeks an analyst to evaluate site-selection software.', self.recent, 'tavily')
+        self.market = [
+            Source('gis', 'https://gis.example.com/tools', 'General GIS', 'General GIS maps many kinds of spatial data.', None, 'tavily'),
+            Source('manual', 'https://manual.example.com/services', 'Manual Review Co', 'Manual Review Co provides human parcel screening services.', None, 'tavily'),
+        ]
 
     def close(self):
         pass
 
     def search(self, query, *, limit, include_details=False, source_domains=()):
         self.searches.append(query)
+        if self.advanced_sources:
+            if 'regulatory filings' in query:
+                return [self.filing]
+            if 'job postings' in query:
+                return [self.job]
+            if 'vendors software' in query:
+                return [self.competitor, *self.market]
+            if 'recent project' in query or 'press releases' in query:
+                return [*self.prospects, *self.bios]
         return [self.competitor] if 'vendors software' in query or 'adjacent B2B' in query else self.prospects
 
     def complete(self, schema, instructions, context, *, max_tokens=1800):
@@ -81,7 +108,8 @@ class SimulatedProviders:
             return IntakeReply(reply='Which regions can you serve?', proposal={'description': 'Compare utility-scale solar development sites.'})
         if schema is ProfileOutput:
             return schema.model_validate({
-                'fields': FIELDS, 'confidence': {'industries': 0.8, 'revenue_band': 0.9},
+                'fields': {**FIELDS, 'industry_codes': [{'system': 'NAICS', 'code': '221114'}, {'system': 'NAICS', 'code': '000000'}]},
+                'confidence': {'industries': 0.8, 'revenue_band': 0.9},
                 'expansion': {'segment': 'Parcel screening', 'reason': 'Existing screening workflows',
                               'evidence': proof('siting', 'Siting Tool provides parcel screening.')},
             })
@@ -116,6 +144,27 @@ class SimulatedProviders:
             }
             if self.only_hold:
                 results['accounts'] = results['accounts'][-1:]
+            if self.advanced_sources:
+                bright['affiliations'] = [
+                    {'person': 'Alex Example', 'organization': 'Shared Grid', 'kind': 'employment',
+                     'evidence': proof('bright-bio', 'Alex Example currently works at Bright Energy and previously worked at Shared Grid.')},
+                    {'person': 'Alex Example', 'organization': 'Harbor University', 'kind': 'education',
+                     'evidence': proof('bright-bio', 'Alex Example of Bright Energy earned a degree from Harbor University.')},
+                ]
+                results['accounts'][2]['affiliations'] = [
+                    {'person': 'Sam Example', 'organization': 'Shared Grid', 'kind': 'employment',
+                     'evidence': proof('west-bio', 'Sam Example currently works at West Energy and previously worked at Shared Grid.')},
+                ]
+                bright['market_signals'] = [
+                    {'kind': 'buying_evaluation', 'evidence': proof('bright-job', self.job.text)},
+                    {'kind': 'renewal', 'vendor': 'GridTools', 'evidence': proof('bright-filing', 'Bright Energy will renew its GridTools contract.')},
+                    {'kind': 'churn', 'vendor': 'OldScreen', 'evidence': proof('bright-filing', 'Bright Energy plans to replace OldScreen.')},
+                ]
+                results['competitors'] = [
+                    {'name': item.title, 'category': category, 'positioning': item.text, 'differentiator': item.text,
+                     'positioning_evidence': proof(item.id, item.text), 'differentiation_evidence': proof(item.id, item.text)}
+                    for item, category in zip(self.market, ('indirect', 'alternative'))
+                ]
             return schema.model_validate(results)
         if schema is CopyOutput:
             evidence = json.loads(context)['required_graph_evidence_id']
@@ -125,6 +174,10 @@ class SimulatedProviders:
                           evidence_ids=['unrelated'] if self.invalid_citation else [evidence])
         if schema is CopyCheck:
             return schema(supported=not self.reject_copy and 'unsupported claim' not in context)
+        if schema is SequenceOutput:
+            return schema(follow_up_subject='Compare potential solar sites',
+                          follow_up_body='Would a site-comparison walkthrough help your team?',
+                          linkedin_body='GeoFlow helps compare solar project sites. Would a brief walkthrough be useful?')
         raise AssertionError(f'Unexpected schema: {schema}')
 
     def enrich(self, domain, target_role):
@@ -140,6 +193,9 @@ class SimulatedProviders:
         if self.resume_send:
             assert self.resume_send.wait(8)
         return self.delivery
+
+    def gmail_feedback(self, message_ids):
+        return {message_id: self.feedback[message_id] for message_id in message_ids if message_id in self.feedback}
 
     def flexprice_balance(self):
         return self.balance
@@ -162,6 +218,7 @@ def system(request):
     )
     store = Neo4jStore(settings, workspace_id=f'test-{uuid4()}')
     providers = SimulatedProviders()
+    providers.store = store
     with TestClient(create_app(settings, store=store, providers=providers), base_url=ORIGIN) as client:
         yield client, providers
 
@@ -221,6 +278,122 @@ def test_intake_chat_proposes_fields_without_mutating_workspace(system):
     assert client.get('/api/workspace').json() == before
     assert len(providers.intake_requests) == 2
     assert providers.searches == providers.lookups == providers.sent == []
+
+
+@pytest.mark.parametrize('system', [{'gmail_feedback_refresh_token': 'simulated-read-token'}], indirect=True)
+def test_gmail_feedback_and_rep_moves_preserve_attribution(system):
+    client, providers = system
+    account_id, draft = prepare_draft(client)
+    path = f'/api/drafts/{draft["id"]}'
+    stage = f'/api/pipeline/{account_id}/stage'
+    post(client, stage, {'expected_stage': 'matched', 'to_stage': 'replied'}, 422)
+    post(client, path + '/review', {'revision': 1, 'decision': 'approve'})
+    post(client, path + '/send', {'revision': 1})
+
+    providers.feedback['gmail-test-1'] = [GmailFeedback('reply-1', 'reply')]
+    result = post(client, '/api/feedback/gmail/sync')['pipeline']
+    assert result['counts']['replied'] == 1
+    assert result['events'][-1]['source'] == 'gmail'
+    assert result['events'][-1]['actor'] == 'system'
+    assert post(client, '/api/feedback/gmail/sync')['pipeline']['events'] == result['events']
+    post(client, stage, {'expected_stage': 'contacted', 'to_stage': 'replied'}, 409)
+    post(client, stage, {'expected_stage': 'replied', 'to_stage': 'closed_lost', 'outcome': 'won'}, 422)
+    result = post(client, stage, {'expected_stage': 'replied', 'to_stage': 'meeting_booked', 'note': 'Confirmed with team@example.com'})['pipeline']
+    assert result['events'][-1]['source'] == 'rep'
+    assert result['events'][-1]['actor'] == 'demo'
+    assert 'team@example.com' not in result['events'][-1]['note']
+    result = post(client, stage, {'expected_stage': 'meeting_booked', 'to_stage': 'closed_lost', 'outcome': 'won'})['pipeline']
+    assert result['counts']['closed_lost'] == 1
+    assert result['events'][-1]['outcome'] == 'won'
+    assert result['analytics']['industry'][0]['reached']['contacted'] == 1
+    assert result['analytics']['tier'][0]['reached']['meeting_booked'] == 1
+    assert len(providers.sent) == 1
+
+
+def test_industry_codes_are_canonicalized_before_profile_approval(system):
+    client, providers = system
+    sign_in(client)
+    state = post(client, '/api/icp/generate', {'name': 'GeoFlow', 'description': 'Compare solar development sites.'})
+    assert state['icp']['fields']['industry_codes'] == [{'system': 'NAICS', 'code': '221114', 'title': 'Solar Electric Power Generation'}]
+    invalid = {'revision': 1, 'fields': {**FIELDS, 'industry_codes': [{'system': 'NAICS', 'code': '000000'}]}}
+    assert post(client, '/api/icp/approve', invalid, 422)['error']['code'] == 'unknown_industry_code'
+    valid = {'revision': 1, 'fields': {**FIELDS, 'industry_codes': [{'system': 'SIC', 'code': '4911', 'title': 'Model-suggested title'}]}}
+    assert post(client, '/api/icp/approve', valid)['icp']['fields']['industry_codes'][0]['title'] == 'ELECTRIC SERVICES'
+
+
+def test_targeted_sources_and_multi_hop_graph_paths(system):
+    client, providers = system
+    providers.advanced_sources = True
+    revision = approve_profile(client)
+    state = post(client, '/api/discover', {'revision': revision, 'deeper_sources': True})
+    assert [item['category'] for item in state['competitors']] == ['direct', 'indirect', 'alternative']
+    assert any('regulatory filings' in query for query in providers.searches)
+    assert any('job postings' in query for query in providers.searches)
+    account = next(item for item in state['accounts'] if item['name'] == 'Bright Energy')
+    assert {'filing', 'job'} <= {item['source_type'] for item in account['evidence']}
+    response = client.get(f'/api/accounts/{account["id"]}/insights')
+    assert response.status_code == 200
+    insights = response.json()
+    assert {item['kind'] for item in insights} == {'employment', 'education', 'warm_introduction', 'buying_evaluation', 'renewal', 'churn'}
+    intro = next(item for item in insights if item['kind'] == 'warm_introduction')
+    assert intro['path'] == ['Alex Example', 'Shared Grid', 'Sam Example', 'West Energy']
+    assert len(intro['evidence']) == 2
+
+
+@pytest.mark.parametrize('system', [{'research_refresh_minutes': 1440}], indirect=True)
+def test_scheduled_research_claim_runs_once_when_due(system):
+    client, providers = system
+    revision = approve_profile(client)
+    initial = post(client, '/api/discover', {'revision': revision})
+    assert initial['research_schedule']['next_due_at']
+    workflow = Workflow(client.app.state.settings, providers.store, providers)
+    assert not workflow.refresh_research_due()
+
+    def backdate(graph, state):
+        state.research_completed_at = datetime.now(timezone.utc) - timedelta(days=2)
+
+    providers.store.write(backdate)
+    assert workflow.refresh_research_due()
+    assert not workflow.refresh_research_due()
+    latest = client.get('/api/workspace').json()
+    assert latest['research_schedule']['last_completed_at'] >= initial['research_schedule']['last_completed_at']
+    assert next(event for event in latest['activity'] if event['type'] == 'discovery_completed')['actor'] == 'system'
+
+
+@pytest.mark.parametrize('system', [{'linkedin_test_profile_url': 'https://www.linkedin.com/in/signal-test-only/'}], indirect=True)
+def test_followups_use_independent_review_schedule_and_handoff(system):
+    client, providers = system
+    account_id, initial = prepare_draft(client)
+    state = post(client, f'/api/accounts/{account_id}/sequence')
+    account = next(item for item in state['accounts'] if item['id'] == account_id)
+    followup, linkedin = account['sequence']
+    email = f'/api/drafts/{followup["id"]}'
+    linked = f'/api/drafts/{linkedin["id"]}'
+    due = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+
+    post(client, email + '/schedule', {'revision': 1, 'scheduled_at': due}, 409)
+    post(client, email + '/review', {'revision': 1, 'decision': 'approve'})
+    post(client, email + '/schedule', {'revision': 1, 'scheduled_at': due})
+    assert post(client, email + '/send', {'revision': 1}, 409)['error']['code'] == 'followup_not_ready'
+    assert providers.sent == []
+    initial_route = f'/api/drafts/{initial["id"]}'
+    post(client, initial_route + '/review', {'revision': 1, 'decision': 'approve'})
+    post(client, initial_route + '/send', {'revision': 1})
+    assert post(client, email + '/send', {'revision': 1}, 409)['error']['code'] == 'followup_scheduled'
+    response = client.patch(email, headers=HEADERS, json={'expected_revision': 1, 'subject': 'Follow up on site comparison', 'body': followup['body']})
+    assert response.status_code == 200
+    assert response.json()['accounts'][0]['sequence'][0]['scheduled_at'] is None
+    post(client, email + '/send', {'revision': 2}, 409)
+    post(client, email + '/review', {'revision': 2, 'decision': 'approve'})
+    post(client, email + '/send', {'revision': 2})
+    post(client, linked + '/review', {'revision': 1, 'decision': 'approve'})
+    post(client, linked + '/send', {'revision': 1}, 422)
+    result = post(client, linked + '/linkedin-handoff', {'revision': 1})
+    assert result['accounts'][0]['sequence'][1]['prepared_at']
+    assert result['pipeline']['counts']['contacted'] == 1
+    assert result['pipeline']['analytics']['message_variant'][0]['label'] == initial['message_variant']
+    assert len(providers.sent) == 2
+    assert len(providers.lookups) == 1
 
 
 def test_real_graph_flow_and_single_send(system):

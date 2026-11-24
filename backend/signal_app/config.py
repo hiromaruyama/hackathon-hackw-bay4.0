@@ -27,6 +27,7 @@ class Settings:
     anthropic_api_key: str = field(default='', repr=False)
     tavily_api_key: str = field(default='', repr=False)
     discovery_domains: tuple[str, ...] = ()
+    research_refresh_minutes: int = 0
     hunter_api_key: str = field(default='', repr=False)
     neo4j_uri: str = ''
     neo4j_username: str = 'neo4j'
@@ -35,8 +36,10 @@ class Settings:
     gmail_client_id: str = ''
     gmail_client_secret: str = field(default='', repr=False)
     gmail_refresh_token: str = field(default='', repr=False)
+    gmail_feedback_refresh_token: str = field(default='', repr=False)
     gmail_sender: str | None = None
     test_recipient: str | None = None
+    linkedin_test_profile_url: str | None = None
     suppressed_recipients: frozenset[str] = field(default_factory=frozenset, repr=False)
     flexprice_enabled: bool = False
     flexprice_base_url: str = 'https://us.api.flexprice.io/v1'
@@ -72,6 +75,12 @@ class Settings:
         if None in suppressed:
             raise ValueError('SIGNAL_SUPPRESSED_RECIPIENTS must contain comma-separated email addresses.')
 
+        linkedin_profile = get('SIGNAL_LINKEDIN_TEST_PROFILE_URL')
+        if linkedin_profile:
+            profile = urlsplit(linkedin_profile)
+            if profile.scheme != 'https' or profile.netloc not in ('www.linkedin.com', 'linkedin.com') or not re.fullmatch(r'/in/[A-Za-z0-9_-]{1,150}/?', profile.path) or profile.query or profile.fragment:
+                raise ValueError('SIGNAL_LINKEDIN_TEST_PROFILE_URL must be an HTTPS LinkedIn profile URL.')
+
         try:
             cost = Decimal(get('FLEXPRICE_ENRICHMENT_COST', '1'))
             if not cost.is_finite() or cost <= 0:
@@ -79,17 +88,27 @@ class Settings:
         except InvalidOperation:
             raise ValueError('FLEXPRICE_ENRICHMENT_COST must be a positive number.') from None
 
+        try:
+            refresh_minutes = int(get('SIGNAL_RESEARCH_REFRESH_MINUTES', '0'))
+            if refresh_minutes < 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError('SIGNAL_RESEARCH_REFRESH_MINUTES must be a nonnegative integer.') from None
+
         return cls(
             public_origin=origin, demo_username=get('SIGNAL_DEMO_USERNAME', 'demo'),
             demo_password=get('SIGNAL_DEMO_PASSWORD'), session_secret=get('SIGNAL_SESSION_SECRET'),
             static_dir=Path(get('SIGNAL_STATIC_DIR', str(cls.static_dir))),
             anthropic_api_key=get('ANTHROPIC_API_KEY'), tavily_api_key=get('TAVILY_API_KEY'),
             discovery_domains=tuple(item.strip() for item in get('SIGNAL_DISCOVERY_DOMAINS').split(',') if item.strip()),
+            research_refresh_minutes=refresh_minutes,
             hunter_api_key=get('HUNTER_API_KEY'), neo4j_uri=get('NEO4J_URI'),
             neo4j_username=get('NEO4J_USERNAME', 'neo4j'), neo4j_password=get('NEO4J_PASSWORD'),
             neo4j_database=get('NEO4J_DATABASE') or None, gmail_client_id=get('GMAIL_CLIENT_ID'),
             gmail_client_secret=get('GMAIL_CLIENT_SECRET'), gmail_refresh_token=get('GMAIL_REFRESH_TOKEN'),
+            gmail_feedback_refresh_token=get('GMAIL_FEEDBACK_REFRESH_TOKEN'),
             gmail_sender=email('GMAIL_SENDER_ADDRESS'), test_recipient=email('SIGNAL_TEST_RECIPIENT'),
+            linkedin_test_profile_url=linkedin_profile or None,
             suppressed_recipients=frozenset(item for item in suppressed if item),
             flexprice_enabled=get('FLEXPRICE_ENABLED', 'false').lower() == 'true',
             flexprice_base_url=get('FLEXPRICE_BASE_URL', cls.flexprice_base_url).rstrip('/'),
@@ -103,6 +122,10 @@ class Settings:
     @property
     def gmail_configured(self) -> bool:
         return all((self.gmail_client_id, self.gmail_client_secret, self.gmail_refresh_token, self.gmail_sender, self.test_recipient))
+
+    @property
+    def gmail_feedback_configured(self) -> bool:
+        return bool(self.gmail_configured and self.gmail_feedback_refresh_token)
 
     @property
     def flexprice_configured(self) -> bool:
