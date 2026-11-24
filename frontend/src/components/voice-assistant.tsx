@@ -1,29 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  ConversationProvider,
-  useConversationClientTool,
-  useConversationControls,
-  useConversationMode,
-  useConversationStatus,
-} from "@elevenlabs/react";
-import { ArrowUp, ArrowUpRight, AudioLines, MessageCircle, Mic, PhoneOff, Square } from "lucide-react";
+import { ConversationProvider, useConversationStatus } from "@elevenlabs/react";
+import { ArrowUpRight, MessageCircle } from "lucide-react";
+import { ChatComposer } from "@/components/chat-composer";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
-import { InlineAlert } from "@/components/signal";
 import { api, ApiError } from "@/lib/api";
 import type { IntakeMessage, Workspace } from "@/lib/types";
-import { useBrowserDictation } from "@/lib/use-browser-dictation";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
 
 // Signal Assistant reads workspace data. Voice sessions use a private ElevenLabs agent
 // and a short-lived signed URL from the authenticated backend.
 
-type Line = { id: number; role: "user" | "agent"; text: string };
+type Line = { id: number; role: "user" | "agent"; text: string; replyError?: string };
 
 const MESSAGE_LIMIT = 500;
 const STARTER_PROMPTS = [
@@ -62,115 +54,38 @@ export function AgentChat({ fullPage = false }: { fullPage?: boolean }) {
 
 function AssistantPanel({ fullPage }: { fullPage: boolean }) {
   const { workspace } = useWorkspace();
-  const { startSession, endSession, sendUserMessage } = useConversationControls();
   const { status } = useConversationStatus();
-  const { isSpeaking } = useConversationMode();
+  const connected = status === "connected";
   const [lines, setLines] = useState<Line[]>([]);
   const [text, setText] = useState("");
-  const [startingVoice, setStartingVoice] = useState(false);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<{ title: string; message: string } | null>(null);
   const nextId = useRef(1);
   const endRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const voiceStart = useRef<symbol | null>(null);
-
-  // The handler reads the latest workspace on every call.
-  useConversationClientTool("get_workspace_summary", () => JSON.stringify(summarize(workspace)));
-
-  const { status: dictation, toggle: toggleDictation } = useBrowserDictation(
-    (transcript) => {
-      setText((current) => [current.trimEnd(), transcript].filter(Boolean).join(" ").slice(0, MESSAGE_LIMIT));
-      composerRef.current?.focus();
-    },
-    (message) => setError({ title: "Dictation unavailable", message }),
-  );
-
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
-  }, [lines, error]);
+  }, [lines, sending]);
 
-  useEffect(() => () => {
-    voiceStart.current = null;
-    endSession();
-  }, [endSession]);
-
-  const connected = status === "connected";
-  const connectingVoice = startingVoice || status === "connecting";
-  const dictating = dictation !== "idle";
-  const busy = sending || connectingVoice || dictating;
-  const composerStatus = dictation === "starting" ? "Starting microphone…"
-    : dictation === "listening" ? "Listening for dictation…"
-    : dictation === "finishing" ? "Finishing dictation…"
-    : connectingVoice ? "Connecting voice…"
-    : connected ? (isSpeaking ? "Signal is speaking…" : "Voice is listening…")
-    : sending ? "Signal is replying…" : "";
-
-  function appendLines(...messages: Omit<Line, "id">[]) {
-    const added = messages.map((message) => ({ ...message, id: nextId.current++ }));
-    setLines((current) => [...current, ...added]);
+  function appendLine(role: Line["role"], text: string) {
+    const line = { role, text, id: nextId.current++ };
+    setLines((current) => [...current, line]);
+    return line;
   }
 
-  async function startVoice() {
-    if (voiceStart.current) return;
-    const attempt = Symbol();
-    voiceStart.current = attempt;
-    setError(null);
-    setStartingVoice(true);
-    try {
-      const { signed_url } = await api.chatSession();
-      if (voiceStart.current !== attempt) return;
-      startSession({
-        signedUrl: signed_url,
-        onMessage: ({ message, role }) => {
-          const transcript = message?.trim();
-          if (transcript) appendLines({ role, text: transcript });
-        },
-        onError: () => {
-          setError({ title: "Voice unavailable", message: "Couldn't connect to voice. You can still type below." });
-        },
-      });
-    } catch (e) {
-      if (voiceStart.current === attempt) {
-        setError({ title: "Voice unavailable", message: e instanceof ApiError ? e.message : "Couldn't start voice. Try again." });
-      }
-    } finally {
-      if (voiceStart.current === attempt) {
-        voiceStart.current = null;
-        setStartingVoice(false);
-      }
-    }
-  }
-
-  async function send(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const draft = text;
-    const message = draft.trim();
-    if (!message || busy) return;
-    setError(null);
-
-    if (connected) {
-      try {
-        sendUserMessage(message);
-        setText("");
-      } catch {
-        setError({ title: "Message failed", message: "Couldn't send that message to the voice session. Try again." });
-      }
-      return;
-    }
-
+  async function requestReply(turn: Line) {
     setSending(true);
+    if (turn.replyError) setLines((current) => current.map((line) => line.id === turn.id ? { ...line, replyError: undefined } : line));
     try {
-      const history: IntakeMessage[] = lines.slice(-12).map((line) => ({
+      const history: IntakeMessage[] = lines.filter((line) => line.id < turn.id && !line.replyError).slice(-12).map((line) => ({
         role: line.role === "user" ? "user" : "assistant",
         text: line.text.slice(0, 2000),
       }));
-      const { reply } = await api.chatMessage(message, history);
-      appendLines({ role: "user", text: message }, { role: "agent", text: reply });
-      setText((current) => current === draft ? "" : current);
-    } catch (e) {
-      setError({ title: "Message failed", message: e instanceof ApiError ? e.message : "Couldn't get an answer. Try again." });
+      const { reply } = await api.chatMessage(turn.text, history);
+      appendLine("agent", reply);
+    } catch (error) {
+      const replyError = error instanceof ApiError ? error.message : "Couldn't get an answer. Try again.";
+      setLines((current) => current.map((line) => line.id === turn.id ? { ...line, replyError } : line));
     } finally {
       setSending(false);
     }
@@ -188,7 +103,7 @@ function AssistantPanel({ fullPage }: { fullPage: boolean }) {
                   <button
                     type="button"
                     className="flex w-full items-center justify-between gap-3 rounded-lg border bg-card px-3.5 py-3 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
-                    disabled={busy}
+                    disabled={sending || status === "connecting"}
                     onClick={() => {
                       setText(prompt);
                       composerRef.current?.focus();
@@ -209,8 +124,17 @@ function AssistantPanel({ fullPage }: { fullPage: boolean }) {
               <p className={cn("whitespace-pre-wrap wrap-anywhere text-sm leading-relaxed", line.role === "user" && "rounded-lg bg-muted px-3 py-2")}>
                 {line.text}
               </p>
+              {line.replyError ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p role="alert" className="text-xs text-destructive">{line.replyError}</p>
+                  {line.id === lines.at(-1)?.id && !connected ? (
+                    <Button size="sm" variant="outline" disabled={sending || status === "connecting"} onClick={() => void requestReply(line)}>Retry reply</Button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ))}
+          {sending ? <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner aria-hidden /> Signal is replying…</p> : null}
           <div ref={endRef} />
         </div>
       </div>
@@ -219,60 +143,18 @@ function AssistantPanel({ fullPage }: { fullPage: boolean }) {
         "flex shrink-0 flex-col gap-2 bg-background pt-3",
         fullPage ? "pb-[env(safe-area-inset-bottom)]" : "border-t px-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5",
       )}>
-        {error ? <InlineAlert tone="danger" title={error.title}>{error.message}</InlineAlert> : null}
-        <form className="rounded-2xl border border-input bg-card p-1.5 shadow-sm focus-within:border-ring" onSubmit={send}>
-          <Textarea
-            ref={composerRef}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            rows={1}
-            placeholder="Ask Signal a question"
-            aria-label="Message Signal Assistant"
-            maxLength={MESSAGE_LIMIT}
-            className="max-h-36 min-h-10 resize-none border-0 bg-transparent px-2.5 py-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
-          />
-          <div className="flex items-center justify-between gap-2 px-0.5 pb-0.5">
-            <span role="status" className="min-w-0 px-1.5 text-xs text-muted-foreground">{composerStatus}</span>
-            <div className="flex shrink-0 items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className={cn("size-9 rounded-full", dictating && "bg-accent text-accent-foreground")}
-                aria-label={dictating ? "Stop dictation" : "Dictate message"}
-                title={dictating ? "Stop dictation" : "Dictate with your browser's speech service"}
-                disabled={connected || connectingVoice || sending || dictation === "finishing"}
-                onClick={() => {
-                  setError(null);
-                  toggleDictation();
-                }}
-              >
-                {dictating ? <Square aria-hidden className="size-3.5 fill-current" /> : <Mic aria-hidden />}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-9 rounded-full"
-                aria-label={connected ? "End live voice chat" : "Start live voice chat"}
-                title={connected ? "End live voice chat" : "Start live voice through ElevenLabs"}
-                disabled={busy}
-                onClick={() => connected ? endSession() : void startVoice()}
-              >
-                {connectingVoice ? <Spinner /> : connected ? <PhoneOff aria-hidden /> : <AudioLines aria-hidden />}
-              </Button>
-              <Button type="submit" size="icon" className="size-9 rounded-full" aria-label="Send message to assistant" disabled={!text.trim() || busy}>
-                <ArrowUp aria-hidden />
-              </Button>
-            </div>
-          </div>
-        </form>
+        <ChatComposer
+          value={text}
+          onChange={setText}
+          inputRef={composerRef}
+          label="Message Signal Assistant"
+          placeholder="Ask Signal a question"
+          maxLength={MESSAGE_LIMIT}
+          sending={sending}
+          onSend={(message) => void requestReply(appendLine("user", message))}
+          onVoiceLine={appendLine}
+          getContext={() => summarize(workspace)}
+        />
       </div>
     </div>
   );
