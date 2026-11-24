@@ -93,7 +93,7 @@ export function AppShell({ commands, children, fullWidth = false }: { fullWidth?
   );
 }
 
-function NavLink({ item: { href, label, icon: Icon }, active, className }: { item: typeof CHAT; active: boolean; className?: string }) {
+function NavLink({ item: { href, label, icon: Icon }, active, className }: { item: typeof AGENT; active: boolean; className?: string }) {
   return (
     <Link
       href={href}
