@@ -2,6 +2,24 @@ import type { Account, Draft, EnrichmentStatus, Recommendation, Stage, Workspace
 
 const TZ = "America/Los_Angeles";
 
+export function publicEvidenceLink(value: string | undefined) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (!url.host || url.username || url.password) return null;
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return {
+      protocol: url.protocol === "https:" ? "https:" : "http:",
+      host: url.host,
+      pathname: url.pathname,
+      search: url.search,
+      hash: url.hash,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function time(iso: string | null | undefined) {
   if (!iso) return "—";
   return new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" }).format(new Date(iso));

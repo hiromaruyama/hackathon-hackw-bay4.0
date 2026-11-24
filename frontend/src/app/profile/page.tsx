@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { ChevronDown, ExternalLink, FilePenLine } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { IntakeChat } from "@/components/intake-chat";
@@ -18,7 +19,7 @@ import {
 } from "@/lib/profile-brief";
 import type { ExpansionDecision, Icp, IntakeFields } from "@/lib/types";
 import { useWorkspace } from "@/lib/workspace-context";
-import { dateTime } from "@/lib/format";
+import { dateTime, publicEvidenceLink } from "@/lib/format";
 
 export default function ProfilePage() {
   const [tab, setTab] = useState("brief");
@@ -27,19 +28,6 @@ export default function ProfilePage() {
       <Profile tab={tab} setTab={setTab} />
     </AppShell>
   );
-}
-
-function publicEvidenceLink(value: string | undefined) {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    if ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) {
-      return { secure: url.protocol === "https:", destination: url.host + url.pathname + url.search + url.hash };
-    }
-  } catch {
-    return null;
-  }
-  return null;
 }
 
 function Profile({ tab, setTab }: { tab: string; setTab: (value: string) => void }) {
@@ -160,7 +148,11 @@ function Profile({ tab, setTab }: { tab: string; setTab: (value: string) => void
                 <section aria-labelledby="adjacent-title" className="flex flex-col gap-2 border-t py-4">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h2 id="adjacent-title" className="text-sm font-semibold">Adjacent segment</h2>
-                    {source && <a href={source.secure ? `https://${source.destination}` : `http://${source.destination}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm" title={expansion.evidence.title} aria-label={`Source: ${expansion.evidence.title}`}>View source <ExternalLink aria-hidden className="size-3" /></a>}
+                    {source && (
+                      <Link href={source} prefetch={false} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm" title={expansion.evidence.title} aria-label={`Source: ${expansion.evidence.title}`}>
+                        View source <ExternalLink aria-hidden className="size-3" />
+                      </Link>
+                    )}
                   </div>
                   <p className="text-sm"><strong>{expansion.segment}</strong> · {expansion.reason}</p>
                   {!source && <span className="text-sm text-muted-foreground">{expansion.evidence.title}</span>}
