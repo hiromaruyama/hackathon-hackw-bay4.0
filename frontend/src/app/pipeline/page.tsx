@@ -10,6 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -25,6 +26,8 @@ export default function PipelinePage() {
     </AppShell>
   );
 }
+
+const PREVIEW_LEADS_PER_STAGE = 3;
 
 type Move = Pick<PipelineChange, "to_stage" | "outcome"> & { label: string };
 const moveActions: Partial<Record<Stage, Move[]>> = {
@@ -60,6 +63,8 @@ function PipelineView() {
   const researchQueue = accounts.filter((account) => account.recommendation === "hold" && !leadIds.has(account.id))
     .sort((a, b) => b.fit_score - a.fit_score || b.intent_score - a.intent_score || a.name.localeCompare(b.name));
 
+  const accountIds = new Set(accounts.map((account) => account.id));
+
   function choose(lead: Lead, move: Move) {
     setError(null);
     setNote("");
@@ -90,12 +95,17 @@ function PipelineView() {
           <h1 className="text-[22px] leading-tight font-bold">Pipeline</h1>
           <p className="text-muted-foreground">Gmail acceptance moves a lead to Contacted. Gmail can record replies, and reps can log replies, meetings, and outcomes.</p>
         </div>
-        {p.gmail_feedback_configured ? (
-          <Button variant="outline" disabled={pending !== null} onClick={() => void sync()}>
-            {pending === "sync-feedback" ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
-            Sync Gmail feedback
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link href="/graph/">Open knowledge graph</Link>
           </Button>
-        ) : null}
+          {p.gmail_feedback_configured ? (
+            <Button variant="outline" disabled={pending !== null} onClick={() => void sync()}>
+              {pending === "sync-feedback" ? <Spinner data-icon="inline-start" /> : <RefreshCw data-icon="inline-start" />}
+              Sync Gmail feedback
+            </Button>
+          ) : null}
+        </div>
       </div>
       {feedbackError ? <InlineAlert tone="danger" title="Gmail feedback couldn't sync">{feedbackError}</InlineAlert> : null}
 
@@ -112,6 +122,7 @@ function PipelineView() {
         <ol className="grid min-w-[900px] grid-cols-5 gap-3">
           {stages.map((s) => {
             const leads = p.leads.filter((l) => l.stage === s);
+            const shownLeads = leads.slice(0, PREVIEW_LEADS_PER_STAGE);
             const dropAction = dragging && moveActions[dragging.stage]?.find((action) => action.to_stage === s);
             return (
               <li key={s} className="flex flex-col gap-2 rounded-lg border bg-subtle p-3"
@@ -122,14 +133,49 @@ function PipelineView() {
                   choose(dragging, dropAction);
                   setDragging(null);
                 }}>
-                <h2 className="flex items-baseline justify-between font-semibold">
-                  {stageLabel[s]}
-                  <span className="text-sm font-normal text-muted-foreground tabular-nums">{leads.length}</span>
-                </h2>
+                <Sheet>
+                  <h2>
+                    <SheetTrigger className="group flex w-full flex-wrap items-baseline justify-between gap-x-2 rounded text-left font-semibold focus-visible:outline-2 focus-visible:outline-ring">
+                      <span className="group-hover:underline">{stageLabel[s]}</span>
+                      <span className="text-sm font-normal tabular-nums text-muted-foreground">{leads.length}</span>
+                      {leads.length > PREVIEW_LEADS_PER_STAGE ? (
+                        <span className="w-full text-sm font-normal text-link">Show all {leads.length}</span>
+                      ) : null}
+                    </SheetTrigger>
+                  </h2>
+                  <SheetContent side="top" className="h-dvh gap-0 border-0 bg-background/75 backdrop-blur-sm">
+                    <SheetHeader className="border-b bg-card/90 px-6 py-5 pr-14">
+                      <SheetTitle>{stageLabel[s]}</SheetTitle>
+                      <SheetDescription>{leads.length} {leads.length === 1 ? "company" : "companies"}</SheetDescription>
+                    </SheetHeader>
+                    <div role="region" aria-label={`${stageLabel[s]} companies`} tabIndex={0}
+                      className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4">
+                      {leads.length ? (
+                        <ul className="mx-auto w-full max-w-4xl divide-y rounded-lg border bg-card/90 px-4">
+                          {leads.map((lead) => (
+                            <li key={lead.account_id} className="flex flex-wrap items-center justify-between gap-3 py-4">
+                              <div>
+                                <Link href={`/accounts/view/?id=${encodeURIComponent(lead.account_id)}`}
+                                  className="font-semibold underline-offset-2 hover:underline">{lead.company}</Link>
+                                <p className="text-sm text-muted-foreground">{lead.role ?? "Role unknown"}, fit {lead.fit_score}</p>
+                              </div>
+                              {accountIds.has(lead.account_id) ? (
+                                <Link href={`/graph/?account=${encodeURIComponent(lead.account_id)}`}
+                                  aria-label={`View ${lead.company} in graph`} className="text-sm text-link underline-offset-2 hover:underline">
+                                  View in graph
+                                </Link>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : <p className="py-4 text-sm text-muted-foreground">No leads</p>}
+                    </div>
+                  </SheetContent>
+                </Sheet>
                 {leads.length === 0 ? (
                   <p className="py-4 text-sm text-muted-foreground">No leads</p>
                 ) : (
-                  leads.map((l) => {
+                  shownLeads.map((l) => {
                     const attribution = stageAttribution(l.actor, latestEvent.get(l.account_id));
                     return (
                       <article key={l.account_id} className="flex flex-col gap-1 rounded-md border bg-card p-3"
@@ -142,6 +188,12 @@ function PipelineView() {
                         <Link href={`/accounts/view/?id=${l.account_id}`} className="font-semibold text-foreground">
                           {l.company}
                         </Link>
+                        {accountIds.has(l.account_id) ? (
+                          <Link href={`/graph/?account=${encodeURIComponent(l.account_id)}`}
+                            aria-label={`View ${l.company} in graph`} className="self-start text-sm text-link underline-offset-2 hover:underline">
+                            View in graph
+                          </Link>
+                        ) : null}
                         <span className="text-sm text-ink-2">{l.role ?? "Role unknown"}, fit {l.fit_score}</span>
                         <div className="flex flex-wrap gap-1">
                           <Badge variant="outline">{attribution.source}</Badge>
