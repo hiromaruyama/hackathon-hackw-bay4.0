@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { ChevronDown, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { EnrichmentCredits } from "@/components/enrichment-credits";
 import { InlineAlert, Panel, PanelHeader } from "@/components/signal";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -48,7 +49,7 @@ function stageAttribution(actor: string, event?: PipelineEvent) {
 
 function PipelineView() {
   const { workspace, mode, moveLead, syncFeedback, pending } = useWorkspace();
-  const { accounts, pipeline: p } = workspace!;
+  const { accounts, pipeline: p, usage } = workspace!;
   const [dragging, setDragging] = useState<Lead | null>(null);
   const [change, setChange] = useState<{ lead: Lead; move: Move } | null>(null);
   const [note, setNote] = useState("");
@@ -197,6 +198,7 @@ function PipelineView() {
       </Panel>
 
       {p.analytics ? <FunnelAnalytics analytics={p.analytics} /> : null}
+      {usage ? <EnrichmentCredits usage={usage} accounts={accounts} /> : null}
 
       <AlertDialog open={Boolean(change)} onOpenChange={(open) => { if (!open && pending !== "move-lead") setChange(null); }}>
         <AlertDialogContent>

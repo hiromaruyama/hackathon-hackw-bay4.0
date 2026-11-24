@@ -95,9 +95,8 @@ function AccountView() {
               <Verdict value={a.recommendation} />
             </PanelHeader>
             <p className="mb-4">{a.reason}</p>
-            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <dl className="grid grid-cols-3 gap-4">
               <Stat label="Fit" value={a.fit_score} />
-              <Stat label="Intent" value={a.intent_score} />
               <Stat label="Tier" value={a.tier} />
               <Stat label="Sources" value={a.evidence.length} />
             </dl>
@@ -105,7 +104,7 @@ function AccountView() {
               {a.signal ? (
                 <SignalRow tone="positive" title={a.signal.summary} meta={`${a.signal.kind === "direct" ? "Direct signal" : "Indirect signal"}, ${day(a.signal.occurred_on)}`} />
               ) : (
-                <SignalRow tone="none" title="No supported buying signal" meta="Intent is 0 until a source supports one." />
+                <SignalRow tone="none" title="No supported buying signal" />
               )}
               {risk ? <SignalRow tone="negative" title={risk.reason} meta={`Reason to ${a.recommendation === "reject" ? "reject" : "hold"}, ${day(riskSource?.published_at)}`} /> : null}
             </div>
@@ -176,11 +175,11 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function SignalRow({ tone, title, meta }: { tone: "positive" | "negative" | "none"; title: string; meta: string }) {
+function SignalRow({ tone, title, meta }: { tone: "positive" | "negative" | "none"; title: string; meta?: string }) {
   return (
     <div className={cn("rounded-md border-l-[3px] bg-subtle px-3 py-2", tone === "positive" ? "border-l-success" : tone === "negative" ? "border-l-destructive" : "border-l-input")}>
       <span className="font-semibold">{title}</span>
-      <span className="block text-[13px] text-muted-foreground">{meta}</span>
+      {meta ? <span className="block text-[13px] text-muted-foreground">{meta}</span> : null}
     </div>
   );
 }
