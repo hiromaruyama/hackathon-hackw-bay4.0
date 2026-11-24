@@ -68,13 +68,4 @@ export const api = {
     request<{ reply: string }>("POST", "/api/chat/message", { message, history }),
   // The private voice agent uses a short-lived signed URL.
   chatSession: () => request<{ signed_url: string }>("POST", "/api/chat/session", {}),
-  // Proposed route, not in the contract yet. The UI shows "not available" on 404.
-  ask: (accountId: string, question: string) =>
-    request<AskAnswer>("POST", `/api/accounts/${encodeURIComponent(accountId)}/ask`, { question }),
 };
-
-export interface AskAnswer {
-  answer: string;
-  evidence_ids: string[];
-  suggested_edit: { before: string; after: string } | null;
-}

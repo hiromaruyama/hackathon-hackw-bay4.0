@@ -29,10 +29,12 @@ npm run build   # writes out/
 | `/profile/` | Product intake, editable customer profile, approval |
 | `/accounts/` | Discovery, accounts table, competitor |
 | `/accounts/view/?id=` | Account evidence, signals, contact, graph path |
-| `/outreach/?account=` | Draft review, approval, send, and the Ask panel |
+| `/outreach/` | Company list with verdicts and draft status |
+| `/outreach/?account=` | Draft review, Writing Agent, evidence, edit history, approval and send |
 | `/pipeline/` | Stages, counts, stage changes |
+
+The **Writing Agent** asks the authenticated workspace assistant about the selected saved draft. Suggested openings can be reviewed and saved as a new revision. The microphone dictates into the composer and the telephone starts a voice call in the live workspace. The Evidence tab links to the company graph. Edit History lists saved revisions of the selected draft.
 
 ## Open contract questions for the backend
 
-- **Ask:** the UI calls a proposed `POST /api/accounts/{id}/ask` with `{ "question": "…" }` and expects `{ "answer", "evidence_ids", "suggested_edit": { "before", "after" } | null }`. Until it exists, the panel shows "Ask isn't connected yet". Applying a suggestion uses the existing `PATCH /api/drafts/{id}`, so it creates a new revision that needs approval.
 - **Fit breakdown:** accounts only carry a total `fit_score`. Per-dimension points (industry, size, need, geography) would let the table show the breakdown from the design.

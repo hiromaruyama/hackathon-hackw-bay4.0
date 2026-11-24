@@ -135,7 +135,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         } else {
           setWorkspace(await live());
         }
-        if (done) toast.success(done);
+        if (done) toast.success(done, key === "draft-save" ? { position: "top-right" } : undefined);
         return { ok: true };
       } catch (e) {
         const err = e instanceof ApiError ? e : new ApiError(0, "unknown", "Something went wrong. Try again.");

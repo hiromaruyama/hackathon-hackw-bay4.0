@@ -35,6 +35,8 @@
   --color-link: var(--link);
   --color-success: var(--success);
   --color-success-bg: var(--success-bg);
+  --color-review-bg: var(--review-bg);
+  --color-review-ink: var(--review-ink);
   --color-warning: var(--warning);
   --color-warning-ink: var(--warning-ink);
   --color-warning-bg: var(--warning-bg);
@@ -85,6 +87,8 @@
   --success: #2e7d5b;
   --success-bg: #e8f2ed;
   --success-ink: #1f5a40;
+  --review-bg: #fff0df;
+  --review-ink: #92400e;
   --warning: #9a6700;
   --warning-ink: #5c3d00;
   --warning-bg: #fbf1dc;
@@ -131,6 +135,8 @@
   --success: #6cc49a;
   --success-bg: #17302a;
   --success-ink: #b2e6cb;
+  --review-bg: #402819;
+  --review-ink: #fdba74;
   --warning: #e3b350;
   --warning-ink: #f3dca6;
   --warning-bg: #3a2e14;

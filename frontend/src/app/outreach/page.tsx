@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { Lock, Send } from "lucide-react";
+import { ArrowUpRight, Lock, Send } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
-import { AskPanel } from "@/components/ask-panel";
-import { ActivityList, EvidenceList, GraphPath, InlineAlert, Panel } from "@/components/signal";
+import { DraftDirectory } from "@/components/draft-directory";
+import { WritingAgent } from "@/components/writing-agent";
+import { EvidenceList, InlineAlert, Panel } from "@/components/signal";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,90 +21,49 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
-import { dateTime, draftStateText, enrichmentText, time, verdictLabel } from "@/lib/format";
+import { actorLabel, dateTime, draftStateText, enrichmentText, time, verdictClass, verdictLabel } from "@/lib/format";
 import type { Account, Draft } from "@/lib/types";
 import { useWorkspace } from "@/lib/workspace-context";
 import { cn } from "@/lib/utils";
 
 export default function OutreachPage() {
-  return (
-    <AppShell>
-      <Suspense>
-        <Outreach />
-      </Suspense>
-    </AppShell>
-  );
+  return <Suspense><Outreach /></Suspense>;
 }
 
 function Outreach() {
   const { workspace } = useWorkspace();
-  const w = workspace!;
   const params = useSearchParams();
   const param = params.get("account");
-  const withDrafts = w.accounts.filter((a) => a.draft);
-  const account = (param ? w.accounts.find((a) => a.id === param) : null) ?? withDrafts[0];
+  const account = workspace?.accounts.find((item) => item.id === param);
+  const steps = account?.draft ? [account.draft, ...(account.sequence ?? [])] : [];
+  const draft = steps.find((step) => step.id === params.get("draft")) ?? account?.draft;
 
-  if (!account?.draft) {
-    const contactable = w.accounts.find((a) => a.recommendation === "contact");
-    return (
-      <>
-        <h1 className="text-[22px] leading-tight font-bold">Outreach</h1>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Panel aria-labelledby="gmail-channel" className="flex flex-col items-start gap-2">
-            <h2 id="gmail-channel" className="font-semibold">Gmail</h2>
-            <p className="text-sm text-muted-foreground">Approve an initial or follow-up email before sending it to the controlled test inbox.</p>
-            {w.pipeline.gmail_feedback_configured ? (
-              <Button variant="link" size="sm" className="px-0" asChild>
-                <Link href="/pipeline/">Gmail feedback in Pipeline</Link>
-              </Button>
-            ) : null}
-          </Panel>
-          <Panel aria-labelledby="linkedin-channel" className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 id="linkedin-channel" className="font-semibold">LinkedIn</h2>
-              <Badge variant="secondary">Manual handoff</Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">Generate a follow-up, then review and approve the message for your configured test profile.</p>
-          </Panel>
-        </div>
-        <Empty className="border bg-card">
-          <EmptyHeader>
-            <EmptyTitle role="heading" aria-level={2}>No draft to review yet</EmptyTitle>
-            <EmptyDescription>
-              {contactable ? `Open ${contactable.name} and write the initial Gmail draft to start its sequence.` : "Drafts start with accounts marked Contact. Open Accounts to review the recommendations or search again."}
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent>
-            <Button asChild>
-              <Link href={contactable ? `/accounts/view/?id=${contactable.id}` : "/accounts/"}>{contactable ? `Open ${contactable.name}` : "Open accounts"}</Link>
-            </Button>
-          </EmptyContent>
-        </Empty>
-      </>
-    );
-  }
-
-  const steps = [account.draft, ...(account.sequence ?? [])];
-  const draft = steps.find((step) => step.id === params.get("draft")) ?? account.draft;
-  return <Review key={draft.id} account={account} draft={draft} steps={steps} others={withDrafts.filter((a) => a.id !== account.id)} />;
+  return (
+    <AppShell hideAssistant={Boolean(draft)}>
+      {account && draft ? <Review key={draft.id} account={account} draft={draft} steps={steps} /> :
+        workspace ? <DraftDirectory accounts={workspace.accounts} missingDraft={Boolean(param)} gmailFeedback={Boolean(workspace.pipeline.gmail_feedback_configured)} /> : null}
+    </AppShell>
+  );
 }
 
-function Review({ account, draft, steps, others }: { account: Account; draft: Draft; steps: Draft[]; others: Account[] }) {
+const revisionEvents = new Set(["draft_created", "draft_generated", "sequence_step_drafted", "draft_edited"]);
+
+function Review({ account, draft, steps }: { account: Account; draft: Draft; steps: Draft[] }) {
   const { workspace, mode, saveDraft, review, send, writeSequence, schedule, prepareLinkedIn, pending } = useWorkspace();
   const [subject, setSubject] = useState(draft.subject);
   const [body, setBody] = useState(draft.body);
   const [error, setError] = useState<ApiError | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [panel, setPanel] = useState("writing");
   const [scheduledTime, setScheduledTime] = useState("");
 
-  // A new revision from the server replaces local text; the Ask history stays.
+  // A new revision from the server replaces local text; the writing conversation stays.
   const [seenRevision, setSeenRevision] = useState(draft.revision);
   if (draft.revision !== seenRevision) {
     setSeenRevision(draft.revision);
@@ -127,7 +87,7 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
   const canSend = editable && readyForOutreach && !linkedin;
 
   const cited = account.evidence.filter((e) => draft.evidence_ids.includes(e.id));
-  const draftEvents = workspace!.activity.filter((e) => e.draft_id === draft.id || e.account_id === account.id);
+  const draftEvents = workspace!.activity.filter((e) => e.draft_id === draft.id && revisionEvents.has(e.type));
   const lastEdit = draftEvents.find((e) => e.type === "draft_edited" && e.revision === draft.revision);
   const enr = enrichmentText(account.enrichment_status, account.contact?.verification_status);
 
@@ -138,7 +98,7 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
     return res.ok;
   }
 
-  async function applySuggestion(before: string, after: string) {
+  async function applySuggestion(expectedRevision: number, before: string, after: string) {
     if (!editable) {
       setError(new ApiError(0, "dispatch_already_reserved", "The draft is locked because a send was already reserved."));
       return false;
@@ -147,11 +107,16 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
       setError(new ApiError(0, "unsaved", "Save or undo your own edits before applying a suggestion."));
       return false;
     }
-    if (!draft.body.includes(before)) {
+    if (expectedRevision !== draft.revision || !draft.body.includes(before)) {
       setError(new ApiError(0, "stale", "The draft changed, so that suggestion no longer fits. Ask again."));
       return false;
     }
-    return act(() => saveDraft(draft.id, draft.revision, draft.subject, draft.body.replace(before, after)));
+    const updated = draft.body.replace(before, () => after);
+    if (updated.length > (linkedin ? 450 : 4000)) {
+      setError(new ApiError(422, "too_long", "This suggestion exceeds the draft length limit. Ask for a shorter version."));
+      return false;
+    }
+    return act(() => saveDraft(draft.id, expectedRevision, draft.subject, updated));
   }
 
   async function saveSchedule() {
@@ -176,7 +141,7 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
   return (
     <>
       <div className="text-sm text-muted-foreground">
-        <Link href="/accounts/" className="text-muted-foreground">Accounts</Link> /{" "}
+        <Link href="/outreach/" className="underline-offset-2 hover:underline">All company drafts</Link> /{" "}
         <Link href={`/accounts/view/?id=${account.id}`} className="text-muted-foreground">{account.name}</Link> / Draft
       </div>
 
@@ -186,7 +151,7 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
             <div className="flex flex-col gap-1">
               <h1 className="text-[22px] leading-tight font-bold">{account.name}</h1>
               <p className="text-ink-2">
-                {account.domain}. <span className={cn("font-semibold", account.recommendation === "contact" ? "text-success" : "text-warning")}>{verdictLabel[account.recommendation]}</span>, fit {account.fit_score}, intent {account.intent_score}.
+                {account.domain}. <span className={cn("font-semibold", verdictClass[account.recommendation])}>{verdictLabel[account.recommendation]}</span>, fit {account.fit_score}, intent {account.intent_score}.
               </p>
             </div>
             <span className="text-sm text-muted-foreground">{draftStateText(draft)}</span>
@@ -208,18 +173,6 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
               ) : null}
               {draft.message_variant ? <Badge variant="secondary">Variant {draft.message_variant}</Badge> : null}
             </Panel>
-          ) : null}
-
-          {others.length > 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Other drafts:{" "}
-              {others.map((o, i) => (
-                <span key={o.id}>
-                  {i > 0 ? ", " : ""}
-                  <Link href={`/outreach/?account=${o.id}`}>{o.name}</Link>
-                </span>
-              ))}
-            </p>
           ) : null}
 
           {/* Prospect vs. the address that actually receives the email */}
@@ -348,33 +301,36 @@ function Review({ account, draft, steps, others }: { account: Account; draft: Dr
           </div>
         </div>
 
-        <aside aria-label="Account details" className="flex min-h-[560px] flex-col overflow-hidden rounded-lg border bg-card lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)]">
-          <Tabs defaultValue="ask" className="flex min-h-0 flex-1 flex-col gap-0">
-            <TabsList className="h-12 w-full shrink-0 justify-start gap-6 rounded-none border-b bg-transparent px-5">
-              {["ask", "evidence", "activity"].map((t) => (
-                <TabsTrigger
-                  key={t}
-                  value={t}
-                  className="h-full flex-none rounded-none border-0 px-0 text-sm text-muted-foreground shadow-none data-[state=active]:font-semibold data-[state=active]:text-primary data-[state=active]:shadow-[inset_0_-3px_0_var(--primary)]"
-                >
-                  {t === "ask" ? "Ask" : t === "evidence" ? "Evidence" : "Activity"}
-                </TabsTrigger>
-              ))}
+        <aside aria-label="Account details" className="flex h-[min(40rem,85svh)] min-w-0 flex-col overflow-hidden rounded-lg border bg-card lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)]">
+          <Tabs value={panel} onValueChange={setPanel} className="flex min-h-0 flex-1 flex-col gap-0">
+            <TabsList variant="line" aria-label="Draft details" className="h-12 w-full shrink-0 justify-start gap-2 rounded-none border-b px-3">
+              <TabsTrigger value="writing">Writing Agent</TabsTrigger>
+              <TabsTrigger value="evidence">Evidence</TabsTrigger>
+              <TabsTrigger value="history">Edit History</TabsTrigger>
             </TabsList>
-            <TabsContent value="ask" className="flex min-h-0 flex-1 flex-col">
-              <AskPanel account={account} onApply={applySuggestion} />
+            <TabsContent value="writing" forceMount className="flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
+              <WritingAgent active={panel === "writing"} account={account} revision={draft} onApply={applySuggestion} />
             </TabsContent>
-            <TabsContent value="evidence" className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-              <div className="flex flex-col gap-4">
+            <TabsContent value="evidence" className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              <div className="flex flex-col items-start gap-4">
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/graph/?account=${encodeURIComponent(account.id)}`}>View company graph <ArrowUpRight data-icon="inline-end" aria-hidden /></Link>
+                </Button>
                 <EvidenceList evidence={account.evidence} highlightId={account.signal?.evidence_id} />
-                <div className="rounded-md border p-3">
-                  <h3 className="mb-2 font-semibold">Graph path</h3>
-                  <GraphPath path={account.graph_path} />
-                </div>
               </div>
             </TabsContent>
-            <TabsContent value="activity" className="min-h-0 flex-1 overflow-y-auto px-5 py-2">
-              <ActivityList events={draftEvents} />
+            <TabsContent value="history" className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+              {draftEvents.length ? (
+                <ol aria-label="Saved draft revisions" className="divide-y">
+                  {draftEvents.map((event) => (
+                    <li key={event.id} className="flex flex-col gap-1 py-3 first:pt-0">
+                      <p className="text-sm font-semibold">{event.revision ? `Revision ${event.revision}` : "Saved revision"}</p>
+                      <p className="text-sm">{event.message}</p>
+                      <p className="text-xs text-muted-foreground">{actorLabel(event.actor)} · <time dateTime={event.at}>{dateTime(event.at)} Pacific</time></p>
+                    </li>
+                  ))}
+                </ol>
+              ) : <p className="text-sm text-muted-foreground">No saved edits are available for this draft.</p>}
             </TabsContent>
           </Tabs>
         </aside>

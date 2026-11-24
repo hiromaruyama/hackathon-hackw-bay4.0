@@ -29,7 +29,7 @@ const NAV = [
 
 const CHAT = { href: "/chat/", label: "Chat", icon: MessageCircle };
 
-export function AppShell({ commands, children }: { commands?: React.ReactNode; children: React.ReactNode }) {
+export function AppShell({ commands, children, hideAssistant = false }: { hideAssistant?: boolean; commands?: React.ReactNode; children: React.ReactNode }) {
   const { status, mode, loadError, refresh, workspace } = useWorkspace();
   const pathname = usePathname();
   const chat = pathname === CHAT.href;
@@ -83,7 +83,7 @@ export function AppShell({ commands, children }: { commands?: React.ReactNode; c
             ) : null}
             {status === "ready" && workspace ? children : null}
           </main>
-          {status === "ready" && workspace && !chat ? <VoiceAssistant /> : null}
+          {status === "ready" && workspace && !chat && !hideAssistant ? <VoiceAssistant /> : null}
         </div>
       </div>
     </div>
