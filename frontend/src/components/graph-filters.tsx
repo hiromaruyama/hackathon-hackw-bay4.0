@@ -59,8 +59,8 @@ export function GraphFilters({
   return (
     <Sheet onOpenChange={(open) => { if (!open) setQuery(""); }}>
       <SheetTrigger asChild>
-        <Button variant="outline">
-          <SlidersHorizontal data-icon="inline-start" aria-hidden /> Filters{count > 0 ? ` (${count})` : ""}
+        <Button variant="outline" title="Filters" className="max-sm:min-w-9 max-sm:px-1.5">
+          <SlidersHorizontal aria-hidden /><span className="sr-only sm:not-sr-only">Filters</span>{count > 0 ? ` (${count})` : ""}
         </Button>
       </SheetTrigger>
       <SheetContent className="w-full gap-0 sm:max-w-sm">

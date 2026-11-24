@@ -1,12 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import layout from "./graph.module.css";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useRef, useState } from "react";
-import { ArrowDown, Building2, Check, ChevronRight, Compass, Layers2, Package, Radio, Search, UserRound, Waypoints } from "lucide-react";
+import { ArrowDown, Building2, Check, ChevronRight, Download, Layers2, Package, Radio, Search, UserRound, Waypoints } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { AccountSearch, emptyGraphFilters, findGraphAccounts, GraphFilters } from "@/components/graph-filters";
+import { AccountSearch, emptyGraphFilters, findGraphAccounts, graphVerdicts, GraphFilters } from "@/components/graph-filters";
 import { VerdictMap } from "@/components/verdict-map";
+import { CompanyNetwork } from "@/components/company-network";
+import { ExportMenu } from "@/components/export-menu";
+import { exportGraph } from "@/lib/graph-export";
 import { GraphInsights } from "@/components/graph-insights";
 import { EvidenceList, InlineAlert } from "@/components/signal";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -17,7 +21,6 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { enrichmentText } from "@/lib/format";
 import type { Account, Competitor, GraphNode, Product, Recommendation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
@@ -34,10 +37,11 @@ function Explorer() {
   const { workspace, mode } = useWorkspace();
   const { accounts, product, competitors, competitor } = workspace!;
   const router = useRouter();
-  const selectedId = useSearchParams().get("account");
+  const params = useSearchParams();
+  const selectedId = params.get("account");
   const requested = accounts.find((item) => item.id === selectedId);
   const [filters, setFilters] = useState(emptyGraphFilters);
-  const [branch, setBranch] = useState<Recommendation | null>(requested?.recommendation ?? null);
+  const branch = graphVerdicts.find((verdict) => verdict === params.get("verdict")) ?? requested?.recommendation ?? null;
   const pathTab = useRef<HTMLButtonElement>(null);
   const availableAccounts = accounts.filter((item) => !filters.verdicts.has(item.recommendation) && !filters.scores.has(item.fit_score) && !filters.companies.has(item.id));
   const selected = availableAccounts.find((item) => item.id === selectedId);
@@ -46,18 +50,31 @@ function Explorer() {
     ?? availableAccounts[0];
   const rivals = competitors?.length ? competitors : competitor ? [competitor] : [];
 
+  function openBranch(verdict: Recommendation | null) {
+    router.push(verdict ? `/graph/?verdict=${verdict}` : "/graph/", { scroll: false });
+  }
+
   function openAccountPath(id: string) {
-    setBranch(availableAccounts.find((item) => item.id === id)?.recommendation ?? null);
     router.push(`/graph/?account=${encodeURIComponent(id)}`, { scroll: false });
     pathTab.current?.focus();
   }
 
   return (
-    <>
+    <div className={layout.explorer}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-[22px] leading-tight font-bold">Knowledge graph</h1>
+        <h1 className="text-lg leading-tight sm:text-[22px] font-bold">Knowledge graph</h1>
         {accounts.length ? (
-          <div className="flex gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <details className="relative">
+              <summary title="Export" className="flex size-9 cursor-pointer list-none items-center justify-center gap-1 rounded-md border bg-card text-sm font-medium sm:w-auto sm:px-3"><Download aria-hidden className="size-4" /><span className="sr-only sm:not-sr-only">Export</span></summary>
+              <div className="absolute right-0 z-10 mt-1 w-44 rounded-lg border bg-card p-3 shadow-md">
+                <ExportMenu label="Export knowledge graph" formats={([
+                  ["Nodes CSV", "nodes"], ["Edges CSV", "edges"], ["Graph JSON", "json"],
+                ] as const).map(([label, format]) => ({
+                  label, download: () => exportGraph({ ...workspace!, accounts: availableAccounts }, format),
+                }))} />
+              </div>
+            </details>
             <GraphFilters accounts={accounts} filters={filters} onChange={setFilters} />
             {account ? <AccountPicker accounts={availableAccounts} selectedId={account.id} onSelect={openAccountPath} /> : null}
           </div>
@@ -70,24 +87,36 @@ function Explorer() {
       {account ? (
         <Tabs value={selected ? "path" : "overview"} activationMode="manual" onValueChange={(value) => {
           if (value === "path") openAccountPath(account.id);
-          else router.push("/graph/", { scroll: false });
-        }} className="gap-4 pb-12">
+          else openBranch(requested?.recommendation ?? null);
+        }} className="min-h-0 flex-1 gap-3">
           <TabsList aria-label="Graph view">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger ref={pathTab} value="path">Account path</TabsTrigger>
           </TabsList>
-          <TabsContent value="overview">
-            <div className="flex flex-col gap-4">
-              <VerdictMap accounts={availableAccounts} product={product} hidden={filters.verdicts} branch={branch} onBranch={setBranch} onSelect={openAccountPath} />
-              {rivals.length ? <Card className="px-4 py-1 sm:px-6"><CompetitorRelationships rivals={rivals} /></Card> : null}
+          <TabsContent value="overview" className="flex min-h-0 flex-col data-[state=inactive]:hidden">
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
+              <VerdictMap accounts={availableAccounts} product={product} hidden={filters.verdicts} branch={branch} onBranch={openBranch} />
+              {!branch && rivals.length ? <Card className="px-4 py-1 sm:px-6"><CompetitorRelationships rivals={rivals} /></Card> : null}
             </div>
           </TabsContent>
-          <TabsContent value="path">
-            <div className="flex flex-col gap-4">
+          <TabsContent value="path" className="flex min-h-0 flex-col data-[state=inactive]:hidden">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
               <p role="status" className="sr-only">{account.name} selected</p>
-              <AccountPath account={account} product={product} sample={mode === "sample"} />
-              {mode === "live" ? <GraphInsights key={account.id} accountId={account.id} /> : null}
-              <MoreRelationships key={`relationships-${account.id}`} account={account} />
+              <AccountPath key={account.id} account={account} product={product} sample={mode === "sample"} />
+              {mode === "live" || account.graph_path.length > 3 ? <Accordion type="multiple" className="shrink-0 rounded-lg border bg-card px-4 sm:px-6">
+                {mode === "live" ? (
+                  <AccordionItem value="insights">
+                    <AccordionTrigger>Research graph insights</AccordionTrigger>
+                    <AccordionContent><GraphInsights key={account.id} accountId={account.id} /></AccordionContent>
+                  </AccordionItem>
+                ) : null}
+                {account.graph_path.length > 3 ? (
+                  <AccordionItem value="full-path">
+                    <AccordionTrigger>Full saved path</AccordionTrigger>
+                    <AccordionContent><RelationshipPath path={account.graph_path} account={account} /></AccordionContent>
+                  </AccordionItem>
+                ) : null}
+              </Accordion> : null}
             </div>
           </TabsContent>
         </Tabs>
@@ -108,7 +137,7 @@ function Explorer() {
           </Empty>
         </Card>
       )}
-    </>
+    </div>
   );
 }
 
@@ -127,7 +156,7 @@ function AccountPicker({
   return (
     <Sheet onOpenChange={(open) => { if (!open) setQuery(""); }}>
       <SheetTrigger asChild>
-        <Button variant="outline"><Search data-icon="inline-start" aria-hidden /> Find account</Button>
+        <Button variant="outline" title="Find account" className="max-sm:size-9 max-sm:p-0"><Search aria-hidden /><span className="sr-only sm:not-sr-only">Find account</span></Button>
       </SheetTrigger>
       <SheetContent className="w-full gap-0 sm:max-w-sm">
         <SheetHeader>
@@ -170,11 +199,9 @@ function AccountPath({ account, product, sample }: { account: Account; product: 
   const saved = account.graph_path.length > 0;
   const path = saved ? account.graph_path : researchPath(product, account);
   const origin = saved ? (sample ? "Sample path" : "Neo4j") : "Saved research";
-  const evidenceIds = new Set(path.map((node) => node.evidence_id));
-  const evidence = account.evidence.filter((source) => evidenceIds.has(source.id));
 
   return (
-    <Card className="min-w-0 gap-4 py-4 wrap-anywhere sm:py-5" role="region" aria-labelledby="account-path-title">
+    <Card className="min-h-72 min-w-0 flex-1 gap-3 py-4 wrap-anywhere" role="region" aria-labelledby="account-path-title">
       <CardHeader className="items-center px-4 sm:px-6">
         <div className="flex flex-wrap items-center gap-2.5">
           <CardTitle><h2 id="account-path-title">Account path</h2></CardTitle>
@@ -188,17 +215,8 @@ function AccountPath({ account, product, sample }: { account: Account; product: 
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4 px-4 sm:px-6">
-        <div className="rounded-lg border bg-subtle p-3 lg:p-4">
-          <RelationshipPath path={path} account={account} />
-        </div>
-        <GraphLegend />
-        {evidence.length ? (
-          <section aria-labelledby="graph-evidence-title" className="flex flex-col gap-2 [&_a]:text-link [&_a]:underline">
-            <h3 id="graph-evidence-title" className="text-sm font-semibold">Cited evidence</h3>
-            <EvidenceList evidence={evidence} numbered={false} />
-          </section>
-        ) : null}
+      <CardContent className="flex min-h-0 flex-1 flex-col px-4 sm:px-6">
+        <CompanyNetwork account={account} path={path} />
       </CardContent>
     </Card>
   );
@@ -232,26 +250,6 @@ function nodeCategory(label: string): GraphCategory | undefined {
   const normalized = label.toLowerCase();
   if (normalized === "contact" || normalized === "institution") return "Person";
   return graphCategories.find((category) => category.toLowerCase() === normalized);
-}
-
-function GraphLegend() {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
-      <h3 className="flex items-center gap-1.5 font-semibold">
-        <Compass aria-hidden className="size-4 text-muted-foreground" /> Legend
-      </h3>
-      <ul role="list" className="flex flex-wrap gap-x-4 gap-y-2">
-        {graphCategories.map((category) => {
-          const { icon: Icon, color, legend } = nodeStyles[category];
-          return (
-            <li key={category} className="flex items-center gap-1.5 text-muted-foreground">
-              <Icon aria-hidden className={cn("size-3.5", color)} /> {legend}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
 }
 
 function NodeBox({ node, fit }: { node: GraphNode; fit?: number }) {
@@ -300,56 +298,6 @@ function RelationshipPath({ path, account }: { path: GraphNode[]; account?: Acco
   );
 }
 
-function MoreRelationships({ account }: { account: Account }) {
-  const { signal, contact, negative_signal: risk } = account;
-  const extraSignal = signal && account.graph_path.length > 0
-    && !account.graph_path.some((node) => node.id === signal.id) ? signal : null;
-  if (!contact && !risk && !extraSignal) return null;
-  const enrichment = enrichmentText(account.enrichment_status, contact?.verification_status);
-
-  return (
-    <Card className="min-w-0 gap-1 py-4 wrap-anywhere" role="region" aria-labelledby="more-relationships-title">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle><h2 id="more-relationships-title">More relationships</h2></CardTitle>
-      </CardHeader>
-      <CardContent className="px-4 sm:px-6">
-        <Accordion type="multiple">
-          {contact ? (
-            <AccordionItem value="contact">
-              <AccordionTrigger>Contact and employer</AccordionTrigger>
-              <AccordionContent className="flex flex-col gap-2">
-                <RelationshipPath path={[
-                  { id: contact.id, label: "Person", name: contact.role, relationship: "WORKS_AT", evidence_id: null },
-                  { id: account.id, label: "Company", name: account.name, relationship: null, evidence_id: null },
-                ]} />
-                <p className={enrichment.tone}>{enrichment.text}</p>
-              </AccordionContent>
-            </AccordionItem>
-          ) : null}
-          {extraSignal ? (
-            <AccordionItem value="signal">
-              <AccordionTrigger>Research signal</AccordionTrigger>
-              <AccordionContent className="flex flex-col gap-2">
-                <p>{extraSignal.summary}</p>
-                <RelatedEvidence account={account} id={extraSignal.evidence_id} />
-              </AccordionContent>
-            </AccordionItem>
-          ) : null}
-          {risk ? (
-            <AccordionItem value="risk">
-              <AccordionTrigger>Risk signal</AccordionTrigger>
-              <AccordionContent className="flex flex-col gap-2">
-                <p>{risk.reason}</p>
-                <RelatedEvidence account={account} id={risk.evidence_id} />
-              </AccordionContent>
-            </AccordionItem>
-          ) : null}
-        </Accordion>
-      </CardContent>
-    </Card>
-  );
-}
-
 function CompetitorRelationships({ rivals }: { rivals: Competitor[] }) {
   return (
     <Accordion type="single" collapsible>
@@ -369,9 +317,4 @@ function CompetitorRelationships({ rivals }: { rivals: Competitor[] }) {
       </AccordionItem>
     </Accordion>
   );
-}
-
-function RelatedEvidence({ account, id }: { account: Account; id: string | null }) {
-  const source = account.evidence.find((item) => item.id === id);
-  return source ? <EvidenceList evidence={[source]} numbered={false} /> : null;
 }
