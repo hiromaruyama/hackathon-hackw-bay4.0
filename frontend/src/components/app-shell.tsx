@@ -30,9 +30,12 @@ const NAV = [
 export function AppShell({ commands, children }: { commands?: React.ReactNode; children: React.ReactNode }) {
   const { status, mode, loadError, refresh, workspace } = useWorkspace();
   const pathname = usePathname();
+  const isHome = pathname === "/";
+  const showWorkspace = status === "ready" && workspace !== null;
+  const homeChat = isHome && showWorkspace;
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className={cn("flex min-h-screen flex-col", homeChat && "h-dvh min-h-dvh overflow-hidden")}>
       <header className="flex h-12 shrink-0 items-center gap-4 border-b bg-topbar px-4 text-foreground">
         <Link href="/" className="flex items-center gap-2.5 text-[19px] font-bold whitespace-nowrap text-foreground no-underline hover:text-foreground">
           <Bot aria-hidden size={23} className="text-primary">
@@ -70,13 +73,13 @@ export function AppShell({ commands, children }: { commands?: React.ReactNode; c
           })}
         </nav>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className={cn("flex min-w-0 flex-1 flex-col", homeChat && "min-h-0")}>
           {commands ? (
             <div role="toolbar" aria-label="Commands" className="flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b bg-card px-4">
               {commands}
             </div>
           ) : null}
-          <main className="mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6">
+          <main className={cn("mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6", homeChat && "min-h-0 max-w-none flex-1 gap-0 p-0 md:p-0")}>
             {status === "ready" && loadError ? (
               <InlineAlert tone="danger" title="Couldn't refresh the workspace" action={<Button variant="outline" size="sm" onClick={() => void refresh()}>Retry</Button>}>
                 {loadError.message} You're seeing the last saved view.
@@ -89,9 +92,9 @@ export function AppShell({ commands, children }: { commands?: React.ReactNode; c
                 {loadError?.message ?? "The server didn't respond."}
               </InlineAlert>
             ) : null}
-            {status === "ready" && workspace ? children : null}
+            {showWorkspace ? children : null}
           </main>
-          {status === "ready" && workspace ? <VoiceAssistant /> : null}
+          {showWorkspace && !isHome ? <VoiceAssistant /> : null}
         </div>
       </div>
     </div>
