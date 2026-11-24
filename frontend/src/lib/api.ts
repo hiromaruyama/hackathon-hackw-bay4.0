@@ -36,6 +36,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
+  expansionSourcePath: (revision: number) => `${BASE}/api/icp/${Number(revision)}/expansion/source`,
   session: () => request<{ actor: string }>("GET", "/api/session"),
   signIn: (password: string) => request<{ actor: string }>("POST", "/api/session", { password }),
   signOut: () => request<void>("DELETE", "/api/session"),

@@ -370,6 +370,23 @@ def test_gmail_watch_reconciles_and_deduplicates_feedback(system):
     assert len(providers.sent) == 1
 
 
+def test_expansion_source_opens_only_the_saved_public_citation(system):
+    client, providers = system
+    route = '/api/icp/1/expansion/source'
+    assert client.get(route, follow_redirects=False).status_code == 401
+    approve_profile(client)
+    opened = client.get(route, follow_redirects=False)
+    assert opened.status_code == 302
+    assert opened.headers['location'] == providers.competitor.url
+    assert client.get('/api/icp/999/expansion/source', follow_redirects=False).status_code == 404
+
+    def replace_source(graph, state):
+        state.icp_versions[0].expansion.evidence.url = '/relative-citation'
+
+    providers.store.write(replace_source)
+    assert client.get(route, follow_redirects=False).status_code == 404
+
+
 def test_industry_codes_are_canonicalized_before_profile_approval(system):
     client, providers = system
     sign_in(client)

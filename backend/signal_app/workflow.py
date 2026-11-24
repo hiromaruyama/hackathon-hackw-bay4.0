@@ -14,7 +14,7 @@ from .models import (
     Usage, UsageEvent, UsageOperation, Workspace,
 )
 from .pipeline import PIPELINE_STAGES, funnel_analytics
-from .providers import Delivery, Enriched, GmailFeedback, Providers, clean_text, normalize_domain, stable_id, utcnow
+from .providers import Delivery, Enriched, GmailFeedback, Providers, clean_text, normalize_domain, source_url, stable_id, utcnow
 from .research import (
     analyze_research, check_copy, draft_followups, focus_research, gather_research, make_profile, search_more_accounts, write_copy,
 )
@@ -151,6 +151,16 @@ class Workflow:
             )
 
         return self.store.read(view)
+
+    def expansion_source(self, revision: int) -> str:
+        def read_source(graph: GraphTransaction, state: State) -> str:
+            profile = next((item for item in state.icp_versions if item.revision == revision), None)
+            url = source_url(profile.expansion.evidence.url) if profile and profile.expansion else None
+            if not url:
+                raise SignalError('source_unavailable', 'No public source is available for this revision.', 404)
+            return url
+
+        return self.store.read(read_source)
 
     def generate_icp(self, request: ProductInput, actor: str) -> Workspace:
         product = Product(id=stable_id('product', request.name, request.description), **request.model_dump())

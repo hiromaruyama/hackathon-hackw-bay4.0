@@ -9,7 +9,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import SecretStr
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
@@ -205,6 +205,10 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     @app.post('/api/icp/generate')
     def generate_icp(body: ProductInput, actor: Actor) -> Workspace:
         return workflow.generate_icp(body, actor)
+
+    @app.get('/api/icp/{revision}/expansion/source')
+    def expansion_source(revision: int, actor: Actor) -> RedirectResponse:
+        return RedirectResponse(workflow.expansion_source(revision), status_code=302, headers={'Referrer-Policy': 'no-referrer'})
 
     @app.post('/api/icp/approve')
     def approve_icp(body: ApproveIcp, actor: Actor) -> Workspace:

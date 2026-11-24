@@ -19,6 +19,7 @@ import {
 import type { ExpansionDecision, Icp, IntakeFields } from "@/lib/types";
 import { useWorkspace } from "@/lib/workspace-context";
 import { dateTime } from "@/lib/format";
+import { api } from "@/lib/api";
 
 export default function ProfilePage() {
   const [tab, setTab] = useState("brief");
@@ -29,12 +30,12 @@ export default function ProfilePage() {
   );
 }
 
-function publicEvidenceLink(value: string | undefined) {
+function hasPublicEvidenceLink(value: string | undefined) {
   if (!value) return null;
   try {
     const url = new URL(value);
     if ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) {
-      return { secure: url.protocol === "https:", destination: url.host + url.pathname + url.search + url.hash };
+      return true;
     }
   } catch {
     return null;
@@ -43,7 +44,7 @@ function publicEvidenceLink(value: string | undefined) {
 }
 
 function Profile({ tab, setTab }: { tab: string; setTab: (value: string) => void }) {
-  const { workspace, generateIcp, approveIcp, pending } = useWorkspace();
+  const { workspace, mode, generateIcp, approveIcp, pending } = useWorkspace();
   const { product, icp } = workspace!;
   const saved = useMemo(() => savedBrief(product, icp?.fields), [product, icp]);
   const revision = icp?.revision;
@@ -113,7 +114,7 @@ function Profile({ tab, setTab }: { tab: string; setTab: (value: string) => void
   }
 
   const expansion = icp?.expansion;
-  const source = publicEvidenceLink(expansion?.evidence.url);
+  const source = mode === "live" && icp && hasPublicEvidenceLink(expansion?.evidence.url) ? api.expansionSourcePath(icp.revision) : null;
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-3">
@@ -160,7 +161,7 @@ function Profile({ tab, setTab }: { tab: string; setTab: (value: string) => void
                 <section aria-labelledby="adjacent-title" className="flex flex-col gap-2 border-t py-4">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h2 id="adjacent-title" className="text-sm font-semibold">Adjacent segment</h2>
-                    {source && <a href={source.secure ? `https://${source.destination}` : `http://${source.destination}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm" title={expansion.evidence.title} aria-label={`Source: ${expansion.evidence.title}`}>View source <ExternalLink aria-hidden className="size-3" /></a>}
+                    {source && <a href={source} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm" title={expansion.evidence.title} aria-label={`Source: ${expansion.evidence.title}`}>View source <ExternalLink aria-hidden className="size-3" /></a>}
                   </div>
                   <p className="text-sm"><strong>{expansion.segment}</strong> · {expansion.reason}</p>
                   {!source && <span className="text-sm text-muted-foreground">{expansion.evidence.title}</span>}
