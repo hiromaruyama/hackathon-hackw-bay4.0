@@ -71,7 +71,7 @@ function Home() {
 
       <Workflow w={w} />
 
-      {w.accounts.length > 0 ? <AccountsTable workspace={w} /> : null}
+      {w.accounts.length > 0 ? <AccountsTable workspace={w} compact /> : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel aria-labelledby="pipe-title">
