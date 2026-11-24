@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from signal_app.config import Settings
 from signal_app.errors import ProviderError
 from signal_app.main import create_app
-from signal_app.models import Contact, Workspace
+from signal_app.models import Contact, IntakeReply, Workspace
 from signal_app.providers import Delivery, Enriched, Source
 from signal_app.research import CopyCheck, CopyOutput, DiscoveryOutput, ProfileOutput
 from signal_app.store import Neo4jStore
@@ -41,6 +41,7 @@ class SimulatedProviders:
         self.meters = []
         self.searches = []
         self.graph_evidence_used = []
+        self.intake_requests = []
         self.delivery = Delivery('sent', 'gmail-test-1')
         self.balance = Decimal('1')
         self.send_entered = Event()
@@ -72,6 +73,12 @@ class SimulatedProviders:
         return [self.competitor] if 'vendors software' in query or 'adjacent B2B' in query else self.prospects
 
     def complete(self, schema, instructions, context, *, max_tokens=1800):
+        if schema is IntakeReply:
+            request = json.loads(context)
+            self.intake_requests.append(request)
+            if request['history']:
+                return IntakeReply(reply='Review your product details in the form.', proposal={'constraints': ['United States only']})
+            return IntakeReply(reply='Which regions can you serve?', proposal={'description': 'Compare utility-scale solar development sites.'})
         if schema is ProfileOutput:
             return schema.model_validate({
                 'fields': FIELDS, 'confidence': {'industries': 0.8, 'revenue_band': 0.9},
@@ -195,6 +202,25 @@ def prepare_draft(client):
     account_id = state['accounts'][0]['id']
     draft = get_draft(client, account_id)
     return account_id, draft
+
+
+def test_intake_chat_proposes_fields_without_mutating_workspace(system):
+    client, providers = system
+    route = '/api/intake/chat'
+    request = {'message': 'We compare utility-scale solar development sites. Contact team@example.com.'}
+    post(client, route, request, 401)
+    sign_in(client)
+    before = client.get('/api/workspace').json()
+    result = post(client, route, request)
+    assert result['proposal']['description'] == 'Compare utility-scale solar development sites.'
+    assert 'team@example.com' not in providers.intake_requests[-1]['message']
+    history = [{'role': 'user', 'text': 'We compare solar sites.'}, {'role': 'assistant', 'text': result['reply']}]
+    followup = post(client, route, {'product': result['proposal'], 'history': history, 'message': 'United States only.'})
+    assert followup['proposal']['constraints'] == ['United States only']
+    assert post(client, route, {'history': history * 7, 'message': 'More history.'}, 422)['error']['code'] == 'validation_error'
+    assert client.get('/api/workspace').json() == before
+    assert len(providers.intake_requests) == 2
+    assert providers.searches == providers.lookups == providers.sent == []
 
 
 def test_real_graph_flow_and_single_send(system):
