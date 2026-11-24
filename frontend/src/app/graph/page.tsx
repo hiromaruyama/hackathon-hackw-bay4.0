@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Minus, Plus, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { GraphInsights } from "@/components/graph-insights";
 import { EvidenceList, Panel } from "@/components/signal";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { verdictLabel } from "@/lib/format";
 import type { Evidence, Workspace } from "@/lib/types";
@@ -134,6 +135,9 @@ const W = 960;
 const H = 620;
 const CX = W / 2;
 const CY = H / 2;
+const MIN_ZOOM = 50;
+const MAX_ZOOM = 250;
+const ZOOM_STEP = 25;
 
 // Product in the middle, companies on a ring (best fit at the top), their signals and people fanned outside.
 function layout(nodes: GNode[], edges: GEdge[], productId: string) {
@@ -202,6 +206,55 @@ function Explorer() {
   const [hidden, setHidden] = useState<Set<NodeType>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [zoom, setZoom] = useState(100);
+  const viewport = useRef<HTMLDivElement>(null);
+  const drawing = useRef<SVGSVGElement>(null);
+  const zoomCenter = useRef<{ x: number; y: number; anchorX: number; anchorY: number } | null>(null);
+
+  function rememberZoomCenter(canvas: HTMLDivElement, x: number, y: number) {
+    const graphBounds = drawing.current?.getBoundingClientRect();
+    if (!graphBounds) return;
+    const bounds = canvas.getBoundingClientRect();
+    zoomCenter.current = {
+      x: (bounds.left + x - graphBounds.left) / graphBounds.width,
+      y: (bounds.top + y - graphBounds.top) / graphBounds.height,
+      anchorX: x,
+      anchorY: y,
+    };
+  }
+
+  function changeZoom(value: number) {
+    const canvas = viewport.current;
+    if (!canvas || value === zoom) return;
+    rememberZoomCenter(canvas, canvas.clientWidth / 2, canvas.clientHeight / 2);
+    setZoom(value);
+  }
+
+  useEffect(() => {
+    const canvas = viewport.current;
+    if (!canvas) return;
+
+    function onWheel(event: WheelEvent) {
+      if (!event.ctrlKey || !canvas) return;
+      event.preventDefault();
+      const bounds = canvas.getBoundingClientRect();
+      rememberZoomCenter(canvas, event.clientX - bounds.left, event.clientY - bounds.top);
+      setZoom((current) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current * Math.exp(-event.deltaY * 0.01))));
+    }
+
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [w.accounts.length]);
+
+  useLayoutEffect(() => {
+    const canvas = viewport.current;
+    const center = zoomCenter.current;
+    const graphBounds = drawing.current?.getBoundingClientRect();
+    if (!canvas || !center || !graphBounds) return;
+    const bounds = canvas.getBoundingClientRect();
+    canvas.scrollLeft += graphBounds.left + graphBounds.width * center.x - bounds.left - center.anchorX;
+    canvas.scrollTop += graphBounds.top + graphBounds.height * center.y - bounds.top - center.anchorY;
+  }, [zoom]);
 
   const visibleNodes = nodes.filter((n) => !hidden.has(n.type));
   const visibleIds = new Set(visibleNodes.map((n) => n.id));
@@ -288,10 +341,26 @@ function Explorer() {
           </div>
           {q && matches.length === 0 ? <p role="status" className="text-sm text-muted-foreground">No node matches “{query}”.</p> : null}
 
-          <div className="overflow-hidden rounded-md border bg-subtle">
+          <div role="group" aria-label="Graph zoom" className="flex items-center gap-2 self-end">
+            <Button type="button" variant="outline" size="icon" aria-label="Zoom out"
+              disabled={zoom <= MIN_ZOOM} onClick={() => changeZoom(Math.max(MIN_ZOOM, zoom - ZOOM_STEP))}>
+              <Minus aria-hidden />
+            </Button>
+            <output aria-label="Zoom level" className="w-12 text-center text-sm tabular-nums">{Math.round(zoom)}%</output>
+            <Button type="button" variant="outline" size="icon" aria-label="Zoom in"
+              disabled={zoom >= MAX_ZOOM} onClick={() => changeZoom(Math.min(MAX_ZOOM, zoom + ZOOM_STEP))}>
+              <Plus aria-hidden />
+            </Button>
+            <Button type="button" variant="outline" onClick={() => changeZoom(100)}>Reset zoom</Button>
+          </div>
+
+          <div ref={viewport} role="region" aria-label="Scrollable graph canvas" tabIndex={0}
+            className="overflow-auto rounded-md border bg-subtle" style={{ aspectRatio: `${W} / ${H}` }}>
             <svg
+              ref={drawing}
               viewBox={`0 0 ${W} ${H}`}
-              className="block h-auto w-full"
+              className="mx-auto block h-auto max-w-none"
+              style={{ width: `${zoom}%` }}
               role="group"
               aria-label="Knowledge graph"
               onClick={(e) => {
