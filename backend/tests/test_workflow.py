@@ -702,6 +702,41 @@ def test_contact_lookup_is_saved_without_a_draft_and_reused(system):
     assert len(providers.lookups) == 1
     assert providers.sent == []
 
+@pytest.mark.parametrize('system', [{'flexprice_enabled': True}], indirect=True)
+def test_hunter_lookup_on_hold_observes_credits_and_preserves_qualification(system):
+    client, providers = system
+    discovered = discover_accounts(client)
+    target = next(a for a in discovered['accounts'] if a['recommendation'] == 'contact')
+    account_id = target['id']
+
+    def record_research_hold(graph, state):
+        account = next(item for item in state.accounts if item.id == account_id)
+        account.recommendation = 'hold'
+        account.tier = 'B'
+        account.intent_score = 50
+        del state.leads[account_id]
+
+    providers.store.write(record_research_hold)
+    route = f'/api/accounts/{account_id}'
+    providers.balance = Decimal('0')
+    assert post(client, route + '/enrich', expected=402)['error']['code'] == 'insufficient_enrichment_credits'
+    assert providers.lookups == []
+
+    providers.balance = Decimal('1')
+    post(client, route + '/enrich')
+    state = post(client, route + '/enrich')
+    account = next(a for a in state['accounts'] if a['id'] == account_id)
+    assert account['enrichment_status'] == 'verified'
+    assert account['contact']['email_masked'] == f'•••@{target["domain"]}'
+    assert account['recommendation'] == 'hold'
+    assert account['draft'] is None
+    assert all(lead['account_id'] != account_id for lead in state['pipeline']['leads'])
+    assert post(client, route + '/draft', expected=409)['error']['code'] == 'account_not_qualified'
+    assert providers.lookups == [target['domain']]
+    assert len(providers.meters) == 1
+    assert providers.sent == []
+
+
 def test_refresh_preserves_saved_accounts_missing_from_new_results(system):
     client, providers = system
     original = discover_accounts(client)
