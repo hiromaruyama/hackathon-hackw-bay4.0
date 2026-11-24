@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { ArrowUpRight, Lock, Send } from "lucide-react";
+import { ArrowLeft, ArrowUp, ArrowUpRight, ChevronDown, FilePenLine, Lock, Mail, MessageCircle, Save, Send, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { DraftDirectory } from "@/components/draft-directory";
@@ -27,7 +27,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
-import { actorLabel, dateTime, draftStateText, enrichmentText, time, verdictClass, verdictLabel } from "@/lib/format";
+import { actorLabel, dateTime, enrichmentText, time, verdictClass, verdictLabel } from "@/lib/format";
 import type { Account, Draft } from "@/lib/types";
 import { useWorkspace } from "@/lib/workspace-context";
 import { cn } from "@/lib/utils";
@@ -140,109 +140,130 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
 
   return (
     <>
-      <div className="text-sm text-muted-foreground">
-        <Link href="/outreach/" className="underline-offset-2 hover:underline">All company drafts</Link> /{" "}
-        <Link href={`/accounts/view/?id=${account.id}`} className="text-muted-foreground">{account.name}</Link> / Draft
-      </div>
+      <header className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Link href="/outreach/" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground hover:underline">
+            <ArrowLeft aria-hidden className="size-4" /> All company drafts
+          </Link>
+          <Button asChild variant="outline" size="sm" className="lg:hidden">
+            <a href="#draft-assistant" onClick={() => setPanel("writing")}><MessageCircle data-icon="inline-start" aria-hidden /> Go to Writing Agent</a>
+          </Button>
+        </div>
+        <div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="text-[22px] leading-tight font-bold wrap-anywhere">{account.name}</h1>
+            <Badge variant="outline" className={verdictClass[account.recommendation]}>{verdictLabel[account.recommendation]}</Badge>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <Link href={`/accounts/view/?id=${encodeURIComponent(account.id)}`} className="underline-offset-2 hover:underline">{account.domain}</Link> · Fit {account.fit_score} · Intent {account.intent_score}
+          </p>
+        </div>
+      </header>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(315px,0.46fr)]">
         <div className="flex min-w-0 flex-col gap-4">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <h1 className="text-[22px] leading-tight font-bold">{account.name}</h1>
-              <p className="text-ink-2">
-                {account.domain}. <span className={cn("font-semibold", verdictClass[account.recommendation])}>{verdictLabel[account.recommendation]}</span>, fit {account.fit_score}, intent {account.intent_score}.
-              </p>
-            </div>
-            <span className="text-sm text-muted-foreground">{draftStateText(draft)}</span>
-          </div>
-
-          {mode === "live" ? (
-            <Panel aria-label="Outreach sequence" className="flex flex-wrap items-center gap-2">
-              {steps.map((item, index) => (
-                <Button key={item.id} variant={item.id === draft.id ? "default" : "outline"} size="sm" asChild>
-                  <Link href={`/outreach/?account=${account.id}&draft=${item.id}`} aria-current={item.id === draft.id ? "page" : undefined}>
-                    {index === 0 ? "Initial Gmail email" : item.channel === "linkedin" ? "LinkedIn follow-up" : "Gmail follow-up"}
-                  </Link>
+          <section id="draft-document" tabIndex={-1} aria-label={linkedin ? "LinkedIn draft" : "Gmail draft"} className="min-w-0 scroll-mt-3 rounded-lg border bg-subtle">
+            <div role="group" aria-label="Document controls" className="flex flex-wrap items-center justify-between gap-2 rounded-t-lg border-b bg-card px-3 py-2.5 sm:px-4">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <FilePenLine aria-hidden className="size-5 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">{linkedin ? "LinkedIn follow-up" : step > 1 ? "Gmail follow-up" : "Initial Gmail email"}</p>
+                  <p role="status" className="text-xs text-muted-foreground">{dirty ? "Unsaved changes" : "Saved"} · Revision {draft.revision}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="sm" disabled={!dirty || busy} onClick={() => { setSubject(draft.subject); setBody(draft.body); }}>
+                  <Undo2 data-icon="inline-start" aria-hidden /> Undo
                 </Button>
-              ))}
-              {steps.length === 1 ? (
-                <Button variant="outline" size="sm" disabled={busy} onClick={() => void act(() => writeSequence(account.id))}>
-                  {pending === "sequence" ? <Spinner data-icon="inline-start" /> : null} Generate Gmail and LinkedIn follow-ups
+                <Button size="sm" disabled={!canSave || busy} onClick={() => void act(() => saveDraft(draft.id, draft.revision, subject, body))}>
+                  {pending === "draft-save" ? <Spinner data-icon="inline-start" /> : <Save data-icon="inline-start" aria-hidden />}
+                  {pending === "draft-save" ? "Saving…" : "Save edit"}
                 </Button>
-              ) : null}
-              {draft.message_variant ? <Badge variant="secondary">Variant {draft.message_variant}</Badge> : null}
-            </Panel>
-          ) : null}
+              </div>
+            </div>
+            <details className="group border-b bg-card">
+              <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 px-3 py-2.5 text-xs sm:px-4 [&::-webkit-details-marker]:hidden">
+                <Mail aria-hidden className="size-3.5 text-muted-foreground" />
+                <span className="font-medium">{linkedin ? "Controlled LinkedIn profile" : "Controlled test inbox"}</span>
+                <span className="ml-auto text-muted-foreground">Delivery details</span>
+                <ChevronDown aria-hidden className="size-3.5 text-muted-foreground group-open:rotate-180" />
+              </summary>
+              <div className="flex flex-col gap-4 border-t px-4 py-4 text-sm">
+                <dl className="grid gap-3 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">Prospect</dt>
+                    <dd className="mt-1 flex flex-col">
+                      <span className="font-semibold">{account.contact?.role ?? account.buyer_role ?? "Role not found"}</span>
+                      <span className="wrap-anywhere">{account.contact?.email_masked ?? "No address found"}</span>
+                      <span className={cn("text-xs", enr.tone)}>{enr.text}</span>
+                    </dd>
+                  </div>
+                  <div className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">{linkedin ? "Handoff destination" : "Actual test recipient"}</dt>
+                    <dd className="mt-1 wrap-anywhere">{draft.test_recipient ?? "Test recipient setup needed"}</dd>
+                  </div>
+                </dl>
+                {mode === "live" ? (
+                  <section aria-label="Outreach sequence" className="flex flex-col gap-2 border-t pt-3">
+                    <div className="flex items-center gap-2"><h2 className="text-sm font-medium">Outreach sequence</h2>{draft.message_variant ? <Badge variant="secondary">Variant {draft.message_variant}</Badge> : null}</div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {steps.map((item, index) => (
+                        <Button key={item.id} variant={item.id === draft.id ? "secondary" : "outline"} size="sm" asChild>
+                          <Link href={`/outreach/?account=${encodeURIComponent(account.id)}&draft=${encodeURIComponent(item.id)}`} aria-current={item.id === draft.id ? "page" : undefined}>
+                            {index === 0 ? "Initial Gmail email" : item.channel === "linkedin" ? "LinkedIn follow-up" : "Gmail follow-up"}
+                          </Link>
+                        </Button>
+                      ))}
+                      {steps.length === 1 ? (
+                        <Button variant="outline" size="sm" className="h-auto min-h-8 whitespace-normal" disabled={busy} onClick={() => void act(() => writeSequence(account.id))}>
+                          {pending === "sequence" ? <Spinner data-icon="inline-start" /> : null} Generate Gmail and LinkedIn follow-ups
+                        </Button>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
+              </div>
+            </details>
 
-          {/* Prospect vs. the address that actually receives the email */}
-          <div className="grid rounded-lg border bg-card sm:grid-cols-2">
-            <div className="flex flex-col gap-0.5 border-b px-[18px] py-3.5 sm:border-r sm:border-b-0">
-              <span className="text-[13px] text-muted-foreground">Prospect</span>
-              <span className="font-semibold">{account.contact?.role ?? account.buyer_role ?? "Role not found"}</span>
-              <span className="text-ink-2">{account.contact?.email_masked ?? "No address found"}</span>
-              <span className={cn("text-[13px] font-semibold", enr.tone)}>{enr.text}</span>
+            <div className="p-2.5 sm:p-5 xl:p-6">
+              <article className="mx-auto flex w-full max-w-3xl flex-col gap-6 rounded-sm border bg-card px-5 py-6 shadow-sm sm:px-9 sm:py-9 xl:px-12 xl:py-10">
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="subject" className="text-xs font-medium text-muted-foreground">{linkedin ? "Step title" : "Subject"}</label>
+                  <div className="relative font-serif text-[24px] leading-tight font-semibold tracking-tight sm:text-[28px]">
+                    <span aria-hidden className="invisible block min-h-[1.25em] whitespace-pre-wrap wrap-anywhere">{subject || " "}</span>
+                    <Textarea id="subject" rows={1} maxLength={250} value={subject} readOnly={!editable || busy} placeholder={linkedin ? "Step title" : "Email subject"}
+                      onChange={(event) => setSubject(event.target.value.replace(/[\r\n]+/g, " "))}
+                      onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); document.getElementById("body")?.focus(); } }}
+                      style={{ font: "inherit", letterSpacing: "inherit" }}
+                      className="absolute inset-0 h-full min-h-0 resize-none overflow-hidden rounded-none border-0 bg-transparent p-0 wrap-anywhere shadow-none focus-visible:ring-1 dark:bg-transparent"
+                    />
+                  </div>
+                </div>
+                <div className="border-t pt-5">
+                  <label htmlFor="body" className="sr-only">{linkedin ? "LinkedIn message" : "Email body"}</label>
+                  <Textarea id="body" value={body} rows={12} readOnly={!editable || busy} maxLength={linkedin ? 450 : 4000} placeholder={linkedin ? "Write the LinkedIn message…" : "Write the email…"}
+                    onChange={(event) => setBody(event.target.value)}
+                    className="min-h-60 resize-y rounded-none border-0 bg-transparent p-0 font-serif text-[17px] leading-[1.7] text-foreground shadow-none focus-visible:ring-1 sm:min-h-72 md:text-[17px] dark:bg-transparent"
+                  />
+                </div>
+              </article>
             </div>
-            <div className="flex flex-col gap-0.5 bg-subtle px-[18px] py-3.5">
-              <span className="text-[13px] text-muted-foreground">{linkedin ? "LinkedIn" : "Gmail"}</span>
-              <span className="font-semibold">{linkedin ? "Controlled LinkedIn profile" : "Controlled test inbox"}</span>
-              <span className="break-all text-ink-2">{draft.test_recipient ?? (linkedin ? "LinkedIn test profile setup needed" : "Gmail test inbox setup needed")}</span>
-            </div>
-          </div>
-
-          <StatusAlert draft={draft} dirty={dirty} lastEditMessage={lastEdit?.message} />
-          {draft.role_based ? (
-            <InlineAlert tone="info" title="Role-based draft">
-              Hunter couldn't verify a named contact, so this draft addresses the role.
-            </InlineAlert>
-          ) : null}
-          {draft.synthesis_mode === "grounded_template" ? (
-            <InlineAlert tone="info" title="A claim was replaced with a quote">
-              Copy review couldn't confirm a sentence, so it uses the source's own words instead.
-            </InlineAlert>
-          ) : null}
-          {error ? (
-            <InlineAlert tone="danger" title="That didn't go through">
-              {error.message}
-            </InlineAlert>
-          ) : null}
-
-          <section aria-label={linkedin ? "LinkedIn draft" : "Gmail draft"} className="rounded-lg border bg-card">
-            <div className="flex items-baseline gap-4 border-b px-5 py-3.5">
-              <label htmlFor="subject" className="w-14 shrink-0 text-[13px] text-muted-foreground">{linkedin ? "Step title" : "Subject"}</label>
-              <Input
-                id="subject"
-                value={subject}
-                disabled={!editable}
-                onChange={(e) => setSubject(e.target.value)}
-                className="h-auto border-0 bg-transparent p-0 font-serif text-lg font-semibold shadow-none focus-visible:ring-0 dark:bg-transparent"
-              />
-            </div>
-            <div className="px-5 py-4 md:pl-[92px]">
-              <label htmlFor="body" className="sr-only">{linkedin ? "LinkedIn message" : "Email body"}</label>
-              <Textarea
-                id="body"
-                value={body}
-                disabled={!editable}
-                onChange={(e) => setBody(e.target.value)}
-                rows={Math.max(10, body.split("\n").length + 2)}
-                maxLength={linkedin ? 450 : 4000}
-                className="max-w-[660px] resize-y border-0 bg-transparent p-0 font-serif text-[17px] leading-[1.65] text-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
-              />
-            </div>
-            <div className="border-t px-5 py-3 md:pl-[92px]">
-              <span className="text-[13px] text-muted-foreground">
-                Cites {cited.length} {cited.length === 1 ? "source" : "sources"}:{" "}
-                {cited.map((e, i) => (
-                  <span key={e.id}>
-                    {i > 0 ? ", " : ""}
-                    <a href={e.url} target="_blank" rel="noreferrer noopener">{i + 1}. {e.title}</a>
-                  </span>
-                ))}
-              </span>
-            </div>
+            <details className="group rounded-b-lg border-t bg-card">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-xs font-medium [&::-webkit-details-marker]:hidden">
+                Cited sources ({cited.length}) <ChevronDown aria-hidden className="size-3.5 text-muted-foreground group-open:rotate-180" />
+              </summary>
+              <div className="px-4 pb-3"><EvidenceList evidence={cited} /></div>
+            </details>
           </section>
 
+          {error ? <InlineAlert tone="danger" title="That didn't go through">{error.message}</InlineAlert> : null}
+          <StatusAlert draft={draft} dirty={dirty} lastEditMessage={lastEdit?.message} />
+          {draft.role_based ? (
+            <InlineAlert tone="info" title="Role-based draft">Hunter couldn't verify a named contact, so this draft addresses the role.</InlineAlert>
+          ) : null}
+          {draft.synthesis_mode === "grounded_template" ? (
+            <InlineAlert tone="info" title="A claim was replaced with a quote">Copy review couldn't confirm a sentence, so it uses the source's own words instead.</InlineAlert>
+          ) : null}
           {step > 1 && draft.review_status === "approved" && !dirty ? (
             <Panel aria-label="Schedule follow-up" className="flex flex-col gap-3">
               {draft.scheduled_at ? <p className="text-sm">Scheduled for {dateTime(draft.scheduled_at)} Pacific.</p> : null}
@@ -263,18 +284,9 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
           ) : null}
 
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {dirty ? (
-              <Button variant="ghost" className="h-10" onClick={() => { setSubject(draft.subject); setBody(draft.body); }}>
-                Undo changes
-              </Button>
-            ) : null}
             <Button variant="ghost" className="h-10 font-semibold text-destructive hover:text-destructive" disabled={!canReject || busy} onClick={() => act(() => review(draft.id, draft.revision, "reject"))}>
               {pending === "review-reject" ? <Spinner /> : null}
               Reject draft
-            </Button>
-            <Button variant="outline" className="h-10 font-semibold" disabled={!canSave || busy} onClick={() => act(() => saveDraft(draft.id, draft.revision, subject, body))}>
-              {pending === "draft-save" ? <Spinner /> : null}
-              {pending === "draft-save" ? "Saving…" : "Save edit"}
             </Button>
             <Button className="h-10 px-[18px] font-semibold" disabled={!canApprove || busy} onClick={() => act(() => review(draft.id, draft.revision, "approve"))}>
               {pending === "review-approve" ? <Spinner /> : null}
@@ -301,7 +313,10 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
           </div>
         </div>
 
-        <aside aria-label="Account details" className="flex h-[min(40rem,85svh)] min-w-0 flex-col overflow-hidden rounded-lg border bg-card lg:sticky lg:top-4 lg:h-[calc(100vh-2rem)]">
+        <aside id="draft-assistant" tabIndex={-1} aria-label="Account details" className="flex scroll-mt-3 h-[min(40rem,85svh)] min-w-0 flex-col overflow-hidden rounded-lg border bg-card lg:sticky lg:top-4 lg:h-[min(46rem,calc(100dvh-12rem))] lg:min-h-72">
+          <div className="flex justify-end border-b px-2 py-1 lg:hidden">
+            <Button variant="ghost" size="sm" asChild><a href="#draft-document"><ArrowUp data-icon="inline-start" aria-hidden /> Back to document</a></Button>
+          </div>
           <Tabs value={panel} onValueChange={setPanel} className="flex min-h-0 flex-1 flex-col gap-0">
             <TabsList variant="line" aria-label="Draft details" className="h-12 w-full shrink-0 justify-start gap-2 rounded-none border-b px-3">
               <TabsTrigger value="writing">Writing Agent</TabsTrigger>
@@ -309,7 +324,7 @@ function Review({ account, draft, steps }: { account: Account; draft: Draft; ste
               <TabsTrigger value="history">Edit History</TabsTrigger>
             </TabsList>
             <TabsContent value="writing" forceMount className="flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden">
-              <WritingAgent active={panel === "writing"} account={account} revision={draft} onApply={applySuggestion} />
+              <WritingAgent active={panel === "writing"} account={account} revision={draft} editorText={{ subject, body }} onApply={applySuggestion} />
             </TabsContent>
             <TabsContent value="evidence" className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
               <div className="flex flex-col items-start gap-4">

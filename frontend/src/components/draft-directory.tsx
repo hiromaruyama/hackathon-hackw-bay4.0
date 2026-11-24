@@ -4,28 +4,12 @@ import Link from "next/link";
 import { useState } from "react";
 import { ArrowUpRight, Search } from "lucide-react";
 import { InlineAlert, Verdict } from "@/components/signal";
-import { Badge } from "@/components/ui/badge";
+import { DraftStatus } from "@/components/draft-status";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
-import type { Account, Draft } from "@/lib/types";
+import type { Account } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-function DraftStatus({ draft }: { draft: Draft | null }) {
-  if (!draft) return <Badge variant="secondary">No draft</Badge>;
-  const success = "bg-success-bg text-success-ink";
-  const attention = "bg-review-bg text-review-ink";
-  const danger = "bg-danger-bg text-danger-ink";
-  const status = draft.dispatch_status === "failed" ? ["Send failed", danger]
-    : draft.dispatch_status === "pending_outcome" ? ["Check send outcome", attention]
-    : draft.dispatch_status === "sent" ? ["Sent", success]
-    : draft.prepared_at ? ["Handoff ready", success]
-    : draft.review_status === "rejected" ? ["Rejected", danger]
-    : draft.review_status === "approved" ? ["Approved", success]
-    : ["Needs review", attention];
-
-  return <Badge variant="outline" className={cn("border-transparent", status[1])}>{status[0]}</Badge>;
-}
 
 const columns = "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.2fr)_8rem]";
 
