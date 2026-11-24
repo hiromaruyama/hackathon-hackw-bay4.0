@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Verdict } from "@/components/signal";
-import type { Account, Recommendation, Workspace } from "@/lib/types";
+import type { Recommendation, Workspace } from "@/lib/types";
 import { day, enrichmentText, stageLabel, time } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -18,12 +19,17 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "hold", label: "Hold" },
   { id: "reject", label: "Reject" },
 ];
+const unstagedLabel: Record<Recommendation, string> = {
+  contact: "Stage unavailable",
+  hold: "Research hold",
+  reject: "Excluded",
+};
 
 export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Workspace; title?: string }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const accounts = workspace.accounts;
-  const stageOf = (a: Account) => workspace.pipeline.leads.find((l) => l.account_id === a.id)?.stage;
+  const stagesByAccount = new Map(workspace.pipeline.leads.map((lead) => [lead.account_id, lead.stage]));
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -89,8 +95,8 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
               const signal = risk && a.recommendation === "reject" ? null : a.signal;
               const summary = signal?.summary ?? risk?.reason;
               const signalDate = signal ? signal.occurred_on : a.evidence.find((e) => e.id === risk?.evidence_id)?.published_at;
-              const enr = enrichmentText(a.enrichment_status, a.contact?.verification_status);
-              const stage = stageOf(a);
+              const enr = enrichmentText(a.enrichment_status, a.contact?.verification_status, a.recommendation);
+              const stage = stagesByAccount.get(a.id);
               return (
                 <TableRow key={a.id} className="align-top">
                   <TableCell className="py-3 pl-0">
@@ -119,7 +125,9 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
                     {a.contact ? a.contact.role : <span className="text-muted-foreground">—</span>}
                     <span className={cn("block text-[13px]", enr.tone)}>{enr.text}</span>
                   </TableCell>
-                  <TableCell className="py-3 pr-0">{stage ? stageLabel[stage] : <span className="text-muted-foreground">Not in pipeline</span>}</TableCell>
+                  <TableCell className="py-3 pr-0">
+                    {stage ? stageLabel[stage] : <Badge variant="outline">{unstagedLabel[a.recommendation]}</Badge>}
+                  </TableCell>
                 </TableRow>
               );
             })}
