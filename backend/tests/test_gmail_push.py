@@ -1,5 +1,6 @@
 import base64
 import json
+from secrets import token_urlsafe
 from time import time
 
 import httpx
@@ -30,8 +31,8 @@ def signing_keys():
 
 def test_push_uses_signed_google_identity_and_only_its_configured_subscription(monkeypatch, signing_keys):
     settings = Settings(
-        public_origin='https://signal.example.com', gmail_client_id='fixture', gmail_client_secret='fixture',
-        gmail_feedback_refresh_token='fixture', gmail_sender='sender@example.com', test_recipient='test@example.com',
+        public_origin='https://signal.example.com', gmail_client_id='fixture', gmail_client_secret=token_urlsafe(24),
+        gmail_feedback_refresh_token=token_urlsafe(24), gmail_sender='sender@example.com', test_recipient='test@example.com',
         gmail_pubsub_topic='projects/signal-project/topics/signal-feedback',
         gmail_pubsub_subscription='projects/signal-project/subscriptions/signal-feedback',
         gmail_pubsub_service_account='signal-push@signal-project.iam.gserviceaccount.com',

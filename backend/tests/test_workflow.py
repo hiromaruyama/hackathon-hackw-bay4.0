@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from secrets import token_urlsafe
 from threading import Event
 from uuid import uuid4
 
@@ -22,7 +23,7 @@ from signal_app.workflow import Workflow
 
 ORIGIN = 'http://localhost:8000'
 HEADERS = {'Origin': ORIGIN}
-PASSWORD = 'fixture-only-password'
+PASSWORD = token_urlsafe(24)
 FIELDS = {
     'industries': ['Renewable energy project development'], 'geography': ['United States'],
     'headcount_band': '50–500', 'revenue_band': None, 'buyer_titles': ['Director of Project Development'],
@@ -218,9 +219,9 @@ def system(request):
         pytest.skip('Set SIGNAL_TEST_NEO4J_URI to a disposable Neo4j instance for integration tests.')
     params = getattr(request, 'param', {})
     settings = Settings(
-        public_origin=ORIGIN, demo_password=PASSWORD, session_secret='test-secret-only-' * 4,
+        public_origin=ORIGIN, demo_password=PASSWORD, session_secret=token_urlsafe(32),
         neo4j_uri=uri, neo4j_password=os.getenv('SIGNAL_TEST_NEO4J_PASSWORD', ''),
-        gmail_client_id='simulated', gmail_client_secret='simulated', gmail_refresh_token='simulated',
+        gmail_client_id='simulated', gmail_client_secret=token_urlsafe(24), gmail_refresh_token=token_urlsafe(24),
         gmail_sender='owner@example.com', test_recipient='demo@example.com', **params,
     )
     store = Neo4jStore(settings, workspace_id=f'test-{uuid4()}')

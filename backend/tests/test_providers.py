@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from email import policy
 from email.parser import BytesParser
+from secrets import token_urlsafe
 
 import httpx
 import pytest
@@ -148,11 +149,12 @@ def test_gmail_transport_reports_definitive_and_ambiguous_failures(status, expec
 
 
 def test_flexprice_queries_wallet_and_emits_idempotent_event():
+    api_key = token_urlsafe(24)
     event = UsageEvent(id='event-234', account_id='acct-1', operation='leads_enriched',
                        at=datetime.now(timezone.utc), status='pending')
 
     def handler(request):
-        assert request.headers['x-api-key'] == 'sandbox-key'
+        assert request.headers['x-api-key'] == api_key
         if request.method == 'GET':
             assert request.url.path == '/v1/customers/wallets'
             assert request.url.params['include_real_time_balance'] == 'true'
@@ -168,7 +170,7 @@ def test_flexprice_queries_wallet_and_emits_idempotent_event():
         assert payload['properties'] == {'account_id': 'acct-1', 'quantity': '1'}
         return httpx.Response(202, json={'event_id': event.id})
 
-    settings = Settings(flexprice_api_key='sandbox-key', flexprice_customer_id='cust-1',
+    settings = Settings(flexprice_api_key=api_key, flexprice_customer_id='cust-1',
                         flexprice_external_customer_id='demo-user', flexprice_wallet_id='wallet-1')
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         providers = Providers(settings, client)
@@ -187,7 +189,7 @@ def test_hunter_preserves_verification_and_masks_person_address():
         ]}})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        result = Providers(Settings(hunter_api_key='test-only'), client).enrich('example.com', 'Director of Project Development')
+        result = Providers(Settings(hunter_api_key=token_urlsafe(24)), client).enrich('example.com', 'Director of Project Development')
     assert result.status == 'uncertain'
     assert result.contact.verification_status == 'accept_all'
     assert result.contact.mx_valid is True

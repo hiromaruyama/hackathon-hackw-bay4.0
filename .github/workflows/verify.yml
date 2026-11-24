@@ -83,6 +83,10 @@ jobs:
             fi
             exit 0
           fi
+          if [[ "$SNYK_TOKEN" =~ [[:space:]] ]]; then
+            printf '::error::SNYK_TOKEN must contain only the raw scanner token on one line.\n'
+            exit 1
+          fi
           echo 'configured=true' >> "$GITHUB_OUTPUT"
 
       - name: Install backend dependencies
