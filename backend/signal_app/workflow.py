@@ -7,9 +7,9 @@ from .classification import validate_codes
 from .config import EMAIL_PATTERN, Settings
 from .errors import ProviderError, SignalError
 from .models import (
-    INITIAL_DISCOVERY_LIMIT, MAX_DISCOVERY_ACCOUNTS, Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview,
+    INITIAL_DISCOVERY_LIMIT, Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview,
     DraftRevision, EditDraft, GmailWatch, GraphInsight, Icp, Lead, PendingDiscoveryExpansion, Pipeline, PipelineChange, PipelineEvent, Product, ProductInput,
-    ResearchBatch, ResearchSchedule, ReviewDraft, ScheduleDraft, State,
+    ResearchBatch, ResearchSchedule, ReviewDraft, ScheduleDraft, Source, State,
     Usage, UsageEvent, UsageOperation, Workspace,
 )
 from .pipeline import PIPELINE_STAGES, funnel_analytics
@@ -95,10 +95,12 @@ class Workflow:
     def workspace(self) -> Workspace:
         def view(graph: GraphTransaction, state: State) -> Workspace:
             accounts = []
+            drafts = graph.drafts_for_revision(state.approved_icp_revision) if state.accounts and state.approved_icp_revision else {}
+            paths = graph.graph_paths(state.product.id, state.accounts) if state.product else {}
             for account in state.accounts:
-                draft = graph.draft(draft_id(account))
-                path = graph.graph_path(state.product.id, account) if state.product else []
-                followups = [record.view() for step in (2, 3) if (record := graph.draft(draft_id(account, step)))] if draft else []
+                draft = drafts.get(draft_id(account))
+                path = paths.get(account.id, [])
+                followups = [record.view() for step in (2, 3) if (record := drafts.get(draft_id(account, step)))] if draft else []
                 accounts.append(account.model_copy(update={'graph_path': path, 'draft': draft.view() if draft else None, 'sequence': followups}))
 
             leads = []
@@ -142,7 +144,7 @@ class Workflow:
                 ),
                 usage=usage,
                 research_schedule=research_schedule(state, self.settings.research_refresh_minutes),
-                more_accounts_available=bool(state.approved_icp_revision and 0 < len(accounts) < MAX_DISCOVERY_ACCOUNTS),
+                more_accounts_available=bool(state.approved_icp_revision and accounts),
             )
 
         return self.store.read(view)
@@ -239,27 +241,40 @@ class Workflow:
             batch.additional_prospects = previous_sources
             self.store.write(cache)
 
-        account_limit = MAX_DISCOVERY_ACCOUNTS if batch.additional_prospects else INITIAL_DISCOVERY_LIMIT
-        accounts, competitors = analyze_research(self.providers, product, icp, batch, account_limit=account_limit)
+        accounts, competitors = analyze_research(self.providers, product, icp, batch)
         if not batch.focused_search_used and (len(accounts) < 2 or not any(a.recommendation == 'contact' for a in accounts)):
             previous_sources = batch.prospects
             batch = focus_research(self.providers, product, icp, batch, accounts, self.settings.discovery_domains)
             self.store.write(cache)
             if batch.prospects != previous_sources:
-                accounts, competitors = analyze_research(self.providers, product, icp, batch, account_limit=account_limit)
+                accounts, competitors = analyze_research(self.providers, product, icp, batch)
 
         def save(graph: GraphTransaction, state: State) -> None:
             icp_current(state, revision)
-            self._record_account_matches(state, accounts)
-            graph.save_discovery(product, accounts, competitors)
-            state.accounts = accounts
-            state.competitors = competitors
-            state.competitor = competitors[0] if competitors else None
+            refreshed = {account.id: account for account in accounts}
+            expiry = utcnow().date() - timedelta(days=180)
+            for existing in state.accounts:
+                if (existing.id not in refreshed and existing.recommendation == 'contact'
+                        and existing.signal and existing.signal.occurred_on and existing.signal.occurred_on < expiry):
+                    refreshed[existing.id] = existing.model_copy(update={
+                        'recommendation': 'hold', 'intent_score': 50, 'tier': 'B',
+                        'reason': 'The last cited signal is older than 180 days.',
+                    })
+            self._record_account_matches(state, list(refreshed.values()))
+            graph.save_discovery(product, list(refreshed.values()), competitors)
+            merged = {account.id: account for account in state.accounts}
+            merged.update(refreshed)
+            state.accounts = list(merged.values())
+            previous_comparisons = state.competitors or ([state.competitor] if state.competitor else [])
+            comparisons = {item.category: item for item in previous_comparisons}
+            comparisons.update((item.category, item) for item in competitors)
+            state.competitors = [comparisons[key] for key in ('direct', 'indirect', 'alternative') if key in comparisons]
+            state.competitor = state.competitors[0] if state.competitors else None
             state.discovery_revision = revision
             state.research_completed_at = utcnow()
-            verdicts = Counter(account.recommendation for account in accounts)
+            verdicts = Counter(account.recommendation for account in state.accounts)
             add_activity(state, 'discovery_completed', actor,
-                         f'Saved {len(accounts)} cited accounts. {verdicts["contact"]} marked Contact, '
+                         f'Saved {len(state.accounts)} cited accounts. {verdicts["contact"]} marked Contact, '
                          f'{verdicts["hold"]} on Hold, and {verdicts["reject"]} rejected.', revision=revision)
             if competitors:
                 add_activity(state, 'competitor_sourced', 'system', f'{len(competitors)} competitor comparisons were saved with public citations.')
@@ -286,14 +301,34 @@ class Workflow:
             elif account.recommendation != 'contact' and lead and lead.stage == 'matched':
                 lead.next_action = 'Review the current research before outreach'
 
+    def _append_discovery_accounts(self, graph: GraphTransaction, state: State, product: Product,
+                                   accounts: list[Account], sources: list[Source], revision: int, actor: str) -> int:
+        icp_current(state, revision)
+        saved = {account.domain for account in state.accounts}
+        new_accounts = []
+        for account in accounts:
+            if account.domain not in saved and account.icp_revision == revision:
+                new_accounts.append(account)
+                saved.add(account.domain)
+        if new_accounts:
+            self._record_account_matches(state, new_accounts)
+            graph.save_discovery(product, new_accounts, [])
+            state.accounts.extend(new_accounts)
+            retained = state.research_batch or ResearchBatch(revision=revision, prospects=[], competitors=[])
+            urls = {evidence.url for account in new_accounts for evidence in account.evidence}
+            additional = {source.id: source for source in retained.additional_prospects}
+            additional.update((source.id, source) for source in sources if source.url in urls)
+            state.research_batch = retained.model_copy(update={'additional_prospects': list(additional.values())[-24:]})
+        add_activity(state, 'discovery_expanded', actor,
+                     f'Added {len(new_accounts)} cited accounts. {len(state.accounts)} accounts are saved.', revision=revision)
+        return len(new_accounts)
+
     def discover_more(self, revision: int, actor: str, source_domains: list[str]) -> Workspace:
         with self._discovery_lock:
             product, icp, existing, pending = self.store.read(lambda graph, state: (
                 state.product, icp_current(state, revision), tuple(account.domain for account in state.accounts),
                 state.pending_discovery_expansion,
             ))
-            if len(existing) >= MAX_DISCOVERY_ACCOUNTS:
-                return self.workspace()
             if not product or not existing:
                 raise SignalError('discovery_required', 'Find the first set of accounts before looking for more.')
 
@@ -324,27 +359,13 @@ class Workflow:
                     state.pending_discovery_expansion = PendingDiscoveryExpansion(key=key, sources=sources)
 
                 self.store.write(cache)
-            capacity = min(MAX_DISCOVERY_ACCOUNTS - len(existing), INITIAL_DISCOVERY_LIMIT)
             batch = ResearchBatch(revision=revision, prospects=sources, competitors=[])
-            accounts, _ = analyze_research(self.providers, product, icp, batch, exclude_domains=existing, account_limit=capacity)
+            accounts, _ = analyze_research(self.providers, product, icp, batch, exclude_domains=existing)
 
             def save(graph: GraphTransaction, state: State) -> None:
-                icp_current(state, revision)
-                saved = {account.domain for account in state.accounts}
-                new_accounts = [account for account in accounts if account.domain not in saved][:MAX_DISCOVERY_ACCOUNTS - len(saved)]
-                if new_accounts:
-                    self._record_account_matches(state, new_accounts)
-                    graph.save_discovery(product, new_accounts, [])
-                    state.accounts.extend(new_accounts)
-                    retained = state.research_batch or ResearchBatch(revision=revision, prospects=[], competitors=[])
-                    urls = {evidence.url for account in new_accounts for evidence in account.evidence}
-                    additional = {source.id: source for source in retained.additional_prospects}
-                    additional.update((source.id, source) for source in sources if source.url in urls)
-                    state.research_batch = retained.model_copy(update={'additional_prospects': list(additional.values())[-24:]})
+                self._append_discovery_accounts(graph, state, product, accounts, sources, revision, actor)
                 if state.pending_discovery_expansion and state.pending_discovery_expansion.key == key:
                     state.pending_discovery_expansion = None
-                add_activity(state, 'discovery_expanded', actor,
-                             f'Added {len(new_accounts)} cited accounts. {len(state.accounts)} accounts are saved.', revision=revision)
 
             self.store.write(save)
             return self.workspace()
@@ -590,7 +611,14 @@ class Workflow:
             if state.billing_wallet != wallet_key or state.billing_remaining is None:
                 state.billing_wallet = wallet_key
                 state.billing_remaining = balance
-            # Flexprice meters asynchronously. A fixed demo wallet cannot spend unposted credits twice.
+            else:
+                observed = state.billing_balance_observed
+                if observed is None and usage.balance is not None:
+                    observed = Decimal(str(usage.balance))
+                if observed is not None and balance > observed:
+                    state.billing_remaining += balance - observed
+            state.billing_balance_observed = balance
+            # Flexprice meters asynchronously. Preserve in-flight debits while accepting new grants.
             available = min(balance, state.billing_remaining)
             blocked = available < cost
             remaining = available if blocked else available - cost

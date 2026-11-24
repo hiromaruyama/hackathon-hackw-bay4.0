@@ -25,7 +25,6 @@ OutreachChannel = Literal['email', 'linkedin']
 MessageVariant = Literal['A', 'B']
 UsageOperation = Literal['leads_enriched', 'graph_query_evaluated', 'outreach_sent']
 INITIAL_DISCOVERY_LIMIT = 6
-MAX_DISCOVERY_ACCOUNTS = 10
 
 
 class InputModel(BaseModel):
@@ -501,6 +500,7 @@ class State(BaseModel):
     usage: Usage | None = None
     billing_wallet: str | None = None
     billing_remaining: Decimal | None = None
+    billing_balance_observed: Decimal | None = None
 
     @property
     def latest_icp(self) -> Icp | None:

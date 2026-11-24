@@ -8,7 +8,7 @@ from pydantic import Field, StringConstraints
 
 from .errors import ProviderError, SignalError
 from .models import (
-    INITIAL_DISCOVERY_LIMIT, MAX_DISCOVERY_ACCOUNTS, Account, Competitor, CompetitorPlan, Confidence, Description, Evidence,
+    INITIAL_DISCOVERY_LIMIT, Account, Competitor, CompetitorPlan, Confidence, Description, Evidence,
     Expansion, Icp, IcpFields, InputModel, IntakeChat, IntakeFields, IntakeReply, MarketSignal, NegativeSignal, Product,
     PublicAffiliation, ResearchBatch, ShortText, Signal, SignalKind, Source, SynthesisMode,
 )
@@ -441,7 +441,7 @@ def search_more_accounts(providers: Providers, product: Product, icp: Icp, sourc
     return providers.search(
         f'{industry} in {geography} {utcnow().year} new project development, site selection, permits or financing. '
         f'Find different companies with dated, first-party announcements relevant to {trigger or "the approved buyer profile"}.',
-        limit=16, include_details=True, source_domains=source_domains, exclude_domains=existing_domains,
+        limit=16, include_details=True, source_domains=source_domains, exclude_domains=existing_domains[:50],
     )
 
 
@@ -471,7 +471,7 @@ def analyze_research(providers: Providers, product: Product, icp: Icp, batch: Re
         'public price from the same source excerpt. Copy the price as printed and leave it empty if it is undisclosed.',
         context(product=public_product(product), approved_icp=icp.fields.model_dump(), excluded_domains=exclude_domains,
                 prospect_sources=sources_for_prompt(prospects), competitor_sources=sources_for_prompt(batch.competitors)),
-        max_tokens=7200 if account_limit == MAX_DISCOVERY_ACCOUNTS else 5600,
+        max_tokens=5600,
         wrap_json=True,
     )
     now = utcnow()
