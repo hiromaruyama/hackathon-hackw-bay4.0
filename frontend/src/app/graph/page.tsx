@@ -3,14 +3,13 @@
 import Link from "next/link";
 import layout from "./graph.module.css";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useRef, useState } from "react";
-import { ArrowDown, Building2, Check, ChevronRight, Download, Layers2, Package, Radio, Search, UserRound, Waypoints } from "lucide-react";
+import { Suspense, useState } from "react";
+import { ArrowDown, ArrowLeft, Building2, Check, ChevronRight, Layers2, Package, Radio, Search, UserRound, Waypoints } from "lucide-react";
+import { AccountDraftAction } from "@/components/account-draft-action";
 import { AppShell } from "@/components/app-shell";
-import { AccountSearch, emptyGraphFilters, findGraphAccounts, graphVerdicts, GraphFilters } from "@/components/graph-filters";
+import { AccountSearch, findGraphAccounts, graphVerdicts } from "@/components/graph-filters";
 import { VerdictMap } from "@/components/verdict-map";
 import { CompanyNetwork } from "@/components/company-network";
-import { ExportMenu } from "@/components/export-menu";
-import { exportGraph } from "@/lib/graph-export";
 import { GraphInsights } from "@/components/graph-insights";
 import { EvidenceList, InlineAlert } from "@/components/signal";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -20,8 +19,8 @@ import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/componen
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Account, Competitor, GraphNode, Product, Recommendation } from "@/lib/types";
+import { verdictLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
 
@@ -39,15 +38,10 @@ function Explorer() {
   const router = useRouter();
   const params = useSearchParams();
   const selectedId = params.get("account");
-  const requested = accounts.find((item) => item.id === selectedId);
-  const [filters, setFilters] = useState(emptyGraphFilters);
-  const branch = graphVerdicts.find((verdict) => verdict === params.get("verdict")) ?? requested?.recommendation ?? null;
-  const pathTab = useRef<HTMLButtonElement>(null);
-  const availableAccounts = accounts.filter((item) => !filters.verdicts.has(item.recommendation) && !filters.scores.has(item.fit_score) && !filters.companies.has(item.id));
-  const selected = availableAccounts.find((item) => item.id === selectedId);
-  const account = selected
-    ?? availableAccounts.find((item) => item.graph_path.length > 0)
-    ?? availableAccounts[0];
+  const account = accounts.find((item) => item.id === selectedId);
+  const [minimumFit, setMinimumFit] = useState(0);
+  const branch = graphVerdicts.find((verdict) => verdict === params.get("verdict")) ?? null;
+  const availableAccounts = accounts.filter((item) => item.fit_score >= minimumFit);
   const rivals = competitors?.length ? competitors : competitor ? [competitor] : [];
 
   function openBranch(verdict: Recommendation | null) {
@@ -56,7 +50,6 @@ function Explorer() {
 
   function openAccountPath(id: string) {
     router.push(`/graph/?account=${encodeURIComponent(id)}`, { scroll: false });
-    pathTab.current?.focus();
   }
 
   return (
@@ -65,74 +58,58 @@ function Explorer() {
         <h1 className="text-lg leading-tight sm:text-[22px] font-bold">Knowledge graph</h1>
         {accounts.length ? (
           <div className="flex items-center gap-1 sm:gap-2">
-            <details className="relative">
-              <summary title="Export" className="flex size-9 cursor-pointer list-none items-center justify-center gap-1 rounded-md border bg-card text-sm font-medium sm:w-auto sm:px-3"><Download aria-hidden className="size-4" /><span className="sr-only sm:not-sr-only">Export</span></summary>
-              <div className="absolute right-0 z-10 mt-1 w-44 rounded-lg border bg-card p-3 shadow-md">
-                <ExportMenu label="Export knowledge graph" formats={([
-                  ["Nodes CSV", "nodes"], ["Edges CSV", "edges"], ["Graph JSON", "json"],
-                ] as const).map(([label, format]) => ({
-                  label, download: () => exportGraph({ ...workspace!, accounts: availableAccounts }, format),
-                }))} />
-              </div>
-            </details>
-            <GraphFilters accounts={accounts} filters={filters} onChange={setFilters} />
-            {account ? <AccountPicker accounts={availableAccounts} selectedId={account.id} onSelect={openAccountPath} /> : null}
+            {!account && <label className="flex items-center gap-2 text-sm">
+              Fit score
+              <select className="h-9 rounded-md border bg-card px-2" value={minimumFit} onChange={(event) => setMinimumFit(Number(event.target.value))}>
+                <option value={0}>Any</option>
+                {[50, 70, 80, 90].map((score) => <option key={score} value={score}>{score}+</option>)}
+              </select>
+            </label>}
+            <AccountPicker accounts={account ? accounts : availableAccounts} selectedId={account?.id} onSelect={openAccountPath} />
           </div>
         ) : null}
       </div>
 
-      {selectedId && !requested ? (
+      {selectedId && !account ? (
         <InlineAlert tone="info" title="This company is no longer in the workspace">Choose an account from the map.</InlineAlert>
       ) : null}
       {account ? (
-        <Tabs value={selected ? "path" : "overview"} activationMode="manual" onValueChange={(value) => {
-          if (value === "path") openAccountPath(account.id);
-          else openBranch(requested?.recommendation ?? null);
-        }} className="min-h-0 flex-1 gap-3">
-          <TabsList aria-label="Graph view">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger ref={pathTab} value="path">Account path</TabsTrigger>
-          </TabsList>
-          <TabsContent value="overview" className="flex min-h-0 flex-col data-[state=inactive]:hidden">
-            <div className="flex min-h-0 flex-1 flex-col gap-3">
-              <VerdictMap accounts={availableAccounts} product={product} hidden={filters.verdicts} branch={branch} onBranch={openBranch} />
-              {!branch && rivals.length ? <Card className="px-4 py-1 sm:px-6"><CompetitorRelationships rivals={rivals} /></Card> : null}
-            </div>
-          </TabsContent>
-          <TabsContent value="path" className="flex min-h-0 flex-col data-[state=inactive]:hidden">
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-              <p role="status" className="sr-only">{account.name} selected</p>
-              <AccountPath key={account.id} account={account} product={product} sample={mode === "sample"} />
-              {mode === "live" || account.graph_path.length > 3 ? <Accordion type="multiple" className="shrink-0 rounded-lg border bg-card px-4 sm:px-6">
-                {mode === "live" ? (
-                  <AccordionItem value="insights">
-                    <AccordionTrigger>Research graph insights</AccordionTrigger>
-                    <AccordionContent><GraphInsights key={account.id} accountId={account.id} /></AccordionContent>
-                  </AccordionItem>
-                ) : null}
-                {account.graph_path.length > 3 ? (
-                  <AccordionItem value="full-path">
-                    <AccordionTrigger>Full saved path</AccordionTrigger>
-                    <AccordionContent><RelationshipPath path={account.graph_path} account={account} /></AccordionContent>
-                  </AccordionItem>
-                ) : null}
-              </Accordion> : null}
-            </div>
-          </TabsContent>
-        </Tabs>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <Button variant="outline" size="sm" onClick={() => openBranch(account.recommendation)}><ArrowLeft aria-hidden /> {verdictLabel[account.recommendation]} companies</Button>
+            <AccountDraftAction compact account={account} />
+          </div>
+          <p role="status" className="sr-only">{account.name} selected</p>
+          <AccountPath key={account.id} account={account} product={product} sample={mode === "sample"} />
+          {mode === "live" || account.graph_path.length > 3 ? <Accordion type="multiple" className="shrink-0 rounded-lg border bg-card px-4 sm:px-6">
+            {mode === "live" ? (
+              <AccordionItem value="insights">
+                <AccordionTrigger>Research graph insights</AccordionTrigger>
+                <AccordionContent><GraphInsights key={account.id} accountId={account.id} /></AccordionContent>
+              </AccordionItem>
+            ) : null}
+            {account.graph_path.length > 3 ? (
+              <AccordionItem value="full-path">
+                <AccordionTrigger>Full saved path</AccordionTrigger>
+                <AccordionContent><RelationshipPath path={account.graph_path} account={account} /></AccordionContent>
+              </AccordionItem>
+            ) : null}
+          </Accordion> : null}
+        </div>
+      ) : accounts.length ? (
+        <>
+          <VerdictMap accounts={availableAccounts} product={product} branch={branch} onBranch={openBranch} />
+          {!branch && rivals.length ? <Card className="px-4 py-1 sm:px-6"><CompetitorRelationships rivals={rivals} /></Card> : null}
+        </>
       ) : (
         <Card>
           <Empty>
             <EmptyHeader>
-              <EmptyTitle>{accounts.length ? "No companies match your filters" : "No accounts to show"}</EmptyTitle>
-              {accounts.length ? null : <EmptyDescription>Run discovery to see the relationships and sources for each account.</EmptyDescription>}
+              <EmptyTitle>No accounts to show</EmptyTitle>
+              <EmptyDescription>Run discovery to see the relationships and sources for each account.</EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
-              {accounts.length ? (
-                <Button variant="outline" onClick={() => setFilters(emptyGraphFilters)}>Reset filters</Button>
-              ) : (
-                <Button asChild variant="outline"><Link href="/accounts/">Open accounts</Link></Button>
-              )}
+              <Button asChild variant="outline"><Link href="/accounts/">Open accounts</Link></Button>
             </EmptyContent>
           </Empty>
         </Card>
@@ -147,7 +124,7 @@ function AccountPicker({
   onSelect,
 }: {
   accounts: Account[];
-  selectedId: string;
+  selectedId?: string;
   onSelect: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");

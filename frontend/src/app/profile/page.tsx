@@ -24,11 +24,16 @@ export default function ProfilePage() {
   return <AppShell fullWidth><Profile /></AppShell>;
 }
 
-function publicEvidenceLink(value: string | undefined) {
+function publicEvidenceLink(value: string | undefined): string | null {
+  if (!value) return null;
   try {
-    const url = new URL(value ?? "");
-    if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password) return url.href;
-  } catch { /* A source without a public URL still has a readable title. */ }
+    const url = new URL(value);
+    if ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) {
+      return url.href;
+    }
+  } catch {
+    return null;
+  }
   return null;
 }
 

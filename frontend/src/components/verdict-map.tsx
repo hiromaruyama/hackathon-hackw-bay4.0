@@ -1,5 +1,4 @@
-import { ArrowDown, ChevronRight, Compass, Network } from "lucide-react";
-import { GraphCanvas } from "@/components/graph-canvas";
+import { ArrowDown, ChevronRight, Network } from "lucide-react";
 import { CategoryGraph } from "@/components/category-graph";
 import { graphVerdicts } from "@/components/graph-filters";
 import { Badge } from "@/components/ui/badge";
@@ -15,18 +14,17 @@ const verdictSurface = {
   reject: "border-destructive/40 bg-danger-bg",
 };
 
-export function VerdictMap({ accounts, product, hidden, branch, onBranch }: {
+export function VerdictMap({ accounts, product, branch, onBranch }: {
   accounts: Account[];
   product: Product | null;
-  hidden: Set<Recommendation>;
   branch: Recommendation | null;
   onBranch: (verdict: Recommendation | null) => void;
 }) {
-  const groups = graphVerdicts.filter((verdict) => !hidden.has(verdict)).map((verdict) => ({
+  const groups = graphVerdicts.map((verdict) => ({
     verdict,
     companies: accounts.filter((company) => company.recommendation === verdict),
   }));
-  const selected = groups.find(({ verdict, companies }) => verdict === branch && companies.length);
+  const selected = groups.find(({ verdict }) => verdict === branch);
   if (selected) return <CategoryGraph key={selected.verdict} accounts={selected.companies} product={product?.name ?? "Workspace"} verdict={selected.verdict} onBack={() => onBranch(null)} />;
   return (
     <Card role="region" aria-labelledby="graph-overview-title" className="min-h-0 min-w-0 flex-1 gap-3">
@@ -36,8 +34,8 @@ export function VerdictMap({ accounts, product, hidden, branch, onBranch }: {
         <CardAction><Badge variant="secondary">{accounts.length} {accounts.length === 1 ? "company" : "companies"}</Badge></CardAction>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col gap-3 px-4 sm:px-6">
-        <GraphCanvas fill className={styles.canvas}>
-          <div className="mx-auto max-w-3xl px-4 pt-6 pb-3 sm:px-6 sm:pt-8">
+        <div className={cn(styles.canvas, "flex min-h-0 flex-1 flex-col justify-center overflow-auto rounded-lg border bg-subtle")}>
+          <div className="mx-auto my-auto w-full max-w-3xl px-4 pt-6 pb-3 sm:px-6 sm:pt-8">
             <div className="flex w-fit max-w-full items-center gap-3 rounded-lg border border-primary/45 bg-card px-4 py-3 shadow-sm sm:mx-auto">
               <Network aria-hidden className="size-5 shrink-0 text-primary" />
               <div className="min-w-0">
@@ -65,10 +63,7 @@ export function VerdictMap({ accounts, product, hidden, branch, onBranch }: {
               })}
             </ul>
           </div>
-        </GraphCanvas>
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Compass aria-hidden className="size-4 shrink-0" /> Arrows group companies by their saved Accounts verdict.
-        </p>
+        </div>
       </CardContent>
     </Card>
   );
