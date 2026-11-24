@@ -153,7 +153,7 @@ function AssistantPanel({ fullPage }: { fullPage: boolean }) {
           onChange={setText}
           inputRef={composerRef}
           label="Message Signal Assistant"
-          placeholder="Ask Signal a question"
+          placeholder="Message Signal Assistant"
           maxLength={MESSAGE_LIMIT}
           sending={sending}
           onSend={(message) => void requestReply(appendLine("user", message))}
