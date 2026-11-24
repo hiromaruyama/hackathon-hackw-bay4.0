@@ -1,0 +1,101 @@
+# Signal — HackwithBay 4.0 implementation plan
+
+## Goal, ownership, and deadlines
+
+Ship one hosted GTM workflow for **GeoFlow**, a sample startup selling site-analysis software to U.S. renewable energy developers. A founder approves an editable ideal customer profile (ICP), compares real accounts with cited evidence, enriches one contact, uses a live Neo4j query to draft outreach, approves the exact message, sends it to a controlled inbox, and sees one persisted pipeline update.
+
+| Owner | Responsibilities |
+| --- | --- |
+| Backend owner | FastAPI, Claude Haiku 5.5, Tavily, Hunter, Neo4j, Gmail, API contract, scoring, approval enforcement, audit events, backend QA, Flexprice, and any required Nexla work. |
+| Frontend and integration owner | Next.js, TypeScript, Tailwind, shadcn/ui, Render deployment, browser QA, Band Desktop, Snyk, recording, setup and architecture documentation, and submission. Coordinates merges and updates the progress checklist. |
+| Both | Lock the API contract by 11:15 a.m. Use the same sample response during parallel work. Run the complete workflow together by 2:10 p.m. |
+
+**Implementation starts at 11:00 a.m. Pacific after the team gives the go-ahead.** Target a working live run by **2:10 p.m.**, freeze features at **2:30 p.m.**, and submit by **3:15 p.m.** The official deadline is **3:30 p.m.** Flexprice, Band Desktop, and Snyk are integration targets to build as time permits. Organizer-required integrations take priority. [Event agenda](https://luma.com/x05cmrqh)
+
+## Scope and frontend handoff
+
+Use Next.js, TypeScript, Tailwind, and the official shadcn/ui registry with Radix primitives and Lucide icons. Build one workspace with a left `Sidebar`, a central workflow, and an activity `Sheet`. The feed shows recorded actions, graph results, and validation outcomes. Use `Skeleton` or `Spinner` for loading, `Empty` for no results, `Alert` for persistent errors, and Sonner for save confirmations. Disable actions while their requests are pending. FastAPI independently enforces approval and dispatch rules. [shadcn component catalog](https://ui.shadcn.com/docs/components)
+
+| Surface | Core build and acceptance | Stretch or deferred |
+| --- | --- | --- |
+| **Strategy / ICP** | Use `Card`, `FieldGroup`, `Field`, `Input`, `Textarea`, `Select`, and `Badge`. Capture capabilities and constraints, existing customers and wins, pricing, and contract value. Generate editable industries, geography, headcount and revenue bands, titles, seniority, triggers, and exclusions. Show heuristic confidence from 0–1 and preserve unknowns. Offer one sourced adjacent segment with **Accept**, **Edit**, and **Dismiss**. Show the saved approved version. | **Stretch:** one follow-up question and one verified industry code. **Deferred:** full chat, broad NAICS/SIC mapping, and ongoing ICP learning. |
+| **Discovery / competition** | Use `Tabs`, `Table`, `Badge`, `Sheet`, and `ScrollArea`. Show two or three real accounts with domain, fit, intent, tier, recommendation, verification status, and last research time. Account detail shows linked sources, excerpts, positive signals, and reasons to hold or reject. Show one competitor with sourced positioning, a differentiator, and public pricing or **Unknown**. | **Stretch:** a second competitor category or source type. **Deferred:** full direct, indirect, and alternative mapping, bulk enrichment, and continuous discovery. |
+| **Knowledge graph** | Use `Card`, `Badge`, and `Accordion`. Show a live `Product → MATCHED_TO → Company → HAS_SIGNAL → Signal` result with source links. Persist `Person → WORKS_AT → Company` when Hunter supports it. Use a returned signal in the draft. | **Stretch:** node inspection and one sourced `COMPETES_WITH` edge. **Deferred:** full explorer, scheduled ingestion, employment history, warm introductions, buyer-evaluation inference, and renewal/churn paths. |
+| **Enrichment and review** | Use `Card`, `FieldGroup`, `Input`, `Textarea`, `Badge`, `Alert`, and `AlertDialog`. Show one role-matched Hunter result and actual verification status. Show deliverability, MX, headquarters, and LinkedIn only when supported by provider data. Display the prospect separately from the actual test recipient. Provide **Save edit**, **Reject**, **Approve revision**, and **Send test email** as distinct actions. | **Stretch:** separately reviewable follow-up email and LinkedIn drafts. **Deferred:** live LinkedIn sending, scheduled sequences, replies, and bounce webhooks. |
+| **Pipeline and overview** | Use `Card`, `Badge`, `ScrollArea`, and `Separator`. Render **Matched → Contacted → Replied → Meeting Booked → Closed/Lost**. Move a lead on confirmed dispatch and mark the event **Test send**. Show company, role, score, next action, actor, and time. Derive counts and matched-to-contacted rate from saved demo events. Show **—** for a zero denominator. | **Stretch:** attributed manual moves and one industry breakdown. **Deferred:** drag-and-drop, automated later-stage progression, segmented funnels, and A/B analytics. |
+| **Usage** | When Flexprice is live, use `Card` for balance, `Table` for actual usage, and `Alert` for blocked requests. | **Deferred:** invoices, dedicated billing page, and multi-tenant balances. |
+
+## Architecture, API, and workflow
+
+**Deploy one service.** FastAPI serves the Next.js static export and `/api` on Render. Neo4j AuraDB stores graph data, workspace state, ICP and draft revisions, reviews, reservations, and audit events. Use the Anthropic Python SDK with `claude-haiku-5-5` and server-side `ANTHROPIC_API_KEY`. Validate structured model responses. Use Tavily for public research, Hunter for enrichment, and Gmail API for controlled dispatch. Confirm credentials and available Claude API credit at kickoff. [Next.js static exports](https://nextjs.org/docs/app/guides/static-exports) · [Claude Haiku 5.5](https://platform.claude.com/docs/en/models/haiku-5-5/overview) · [Claude structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+
+**Share one response shape.** By 11:15 publish a `Workspace` example with `product`, `icp`, `accounts`, `activity`, `pipeline`, and optional `usage`. Accounts carry evidence, recommendation, enrichment status, graph path, masked contact, and current draft with revision and dispatch status. Use stable IDs and UTC timestamps. Render times in Pacific. Successful writes return the same shape as `GET /api/workspace`. Return a stable code and readable message on errors, and keep the last saved view visible. Use one bounded synchronous request for discovery. Defer queued jobs and streaming.
+
+| API | Inputs and behavior |
+| --- | --- |
+| `GET /api/workspace` | Load the saved workspace. An unused workspace shows an empty state. |
+| `POST /api/icp/generate` | Accept product description, capabilities, constraints, customers/wins, pricing, and contract value. Save inputs and the proposed structured ICP. Use a bounded public lookup for a sourced expansion. If evidence is unavailable, leave the suggestion absent and explain that state. |
+| `POST /api/icp/approve` | Accept the displayed revision, edited fields, and expansion decision. Save a new approved revision. Accepted or edited expansion becomes part of the criteria. |
+| `POST /api/discover` | Require the current approved ICP revision. Search Tavily, deduplicate by normalized domain, and save up to three accounts with evidence IDs, URLs, excerpts, source types, and known dates. Return a retryable error on provider failure. |
+| `POST /api/accounts/{id}/draft` | Require a qualified account from the current approved ICP. Check credit before Hunter when Flexprice is enabled. Look up one contact, retain provider status, query Neo4j, and generate a short subject, body, and cited evidence IDs. Validate that cited records belong to the account and support the copy. If verification is unavailable, offer a labeled role-based draft and display the real Hunter status. |
+| `PATCH /api/drafts/{id}` | Accept `expected_revision`, `subject`, and `body`. Save revision `n+1` as **Pending review** and preserve prior content and review history. |
+| `POST /api/drafts/{id}/review` | Accept `revision` and `decision` of `approve` or `reject`. Review the current revision only. Save decision, actor, timestamp, and the approved snapshot when applicable. |
+| `POST /api/drafts/{id}/send` | Accept `revision`. Load approval and the actual recipient from server state. Validate and reserve in one transaction. Call Gmail after commit. Persist the provider outcome and update the pipeline only on confirmation. |
+
+**Scoring.** Fit sums source-supported matches weighted 35% industry, 20% size, 35% product need, and 10% geography. Unknown dimensions earn zero and remain labeled **Unknown**. Intent is 100 for a direct signal within 180 days, 75 for a recent indirect signal such as hiring, 50 for weak, older, or undated evidence, and 0 without a supported signal. **Tier A / Contact** requires fit ≥70, intent ≥75, and no hard exclusion. A confirmed hard exclusion yields **Tier C / Reject**. Other leads are **Tier B / Hold** with a specific reason. Claude extracts facts and evidence IDs. Application code makes the recommendation.
+
+### Exact approval and dispatch security
+
+- Require a signed-in demo session for workspace data and writes. Require same-origin writes. Only the authenticated backend send route can call Gmail. Share judge access privately. Keep credentials server-side and mask prospect contact details in screenshots, logs, and the public submission.
+- Bind approval to the exact revision, actual recipient, subject, and body. Store the approver and approval time. Load the test inbox on the server and honor recipient suppression before sending. The send request takes a revision only. Edits require fresh approval. Rejection invalidates send eligibility. A stale or ineligible request returns a conflict and makes zero Gmail calls.
+- Serialize edits, review decisions, and dispatch per draft. Acquire a Neo4j write lock before reading the current revision and dispatch state. Atomically validate and persist a unique send reservation. Block edits and reviews while dispatch is unresolved. Duplicate or concurrent requests return the saved attempt state and make no additional Gmail calls. Invoke the provider after the transaction commits with automatic retries disabled. [Neo4j transaction locking](https://neo4j.com/docs/operations-manual/current/database-internals/concurrent-data-access/)
+- On provider confirmation, store the message ID and create one pipeline event transactionally. A definitive rejection records **Failed** and leaves the stage unchanged. A timeout or crash with an uncertain outcome records or retains **Pending review of send outcome**, holds further sends for the draft, and leaves the stage unchanged. Verify receipt in the controlled inbox for the demo.
+- Treat public source content as untrusted input for extraction. Claude can return structured fields and evidence IDs. It has no authority, credentials, or tools to dispatch messages or change the schema. Log edits, approvals, rejections, reservations, and outcomes with actor, revision, and time. Exclude contact addresses, bodies, tokens, and secrets from logs.
+
+## Schedule, bonus integrations, and fallbacks
+
+| Pacific time | Backend owner | Frontend and integration owner |
+| --- | --- | --- |
+| **Before 11:00** | Confirm provider access, test inbox, wallet, and required sponsor tools. | Confirm portal, sponsor eligibility, Band access, and Snyk organization access. |
+| **11:00–11:15** | Publish the API contract and fixture. Begin provider smoke checks. | Start the Next.js/shadcn shell and fixture-backed rendering. |
+| **11:15–noon** | Get an approved ICP and one real cited company into Neo4j. | Build Strategy and Discovery, deploy the shell, and prepare Band and Snyk when the shell builds. |
+| **1:00–1:45** | Add scoring, competitor evidence, graph query, Hunter, and source-backed draft. | Connect the live API and finish account detail, graph path, review, and pipeline. |
+| **1:45–2:10** | Finish guarded dispatch and persisted audit events. | Run the end-to-end browser flow and verify inbox receipt. |
+| **2:10–2:30** | Fix core failures first. Once core passes, wire Flexprice and any required integration where access is ready. | Verify Band and Snyk against the working app. Move to the other if one stalls on access. |
+| **2:30–3:15** | Freeze features, verify deployment in a fresh session, and review the repo for secrets. | Record, finish setup and architecture docs, and submit. Hold 3:15–3:30 for upload or portal problems. |
+
+| Target | First verifiable integration | Remaining scope if time runs out |
+| --- | --- | --- |
+| **Flexprice** | Read sandbox credit before Hunter. Record one enrichment event with a stable ID. Use a known low balance to show zero Hunter calls for a blocked request. Display actual balance and usage. | Graph-query and outreach meters and per-lead cost allocation. |
+| **Band Desktop** | Run a real researcher-to-reviewer `@mention` handoff for the demo lead. Flag unsupported copy, correct the draft, and capture a visible human decision. Confirm whether the narrow handoff qualifies. | Four roles, in-room approval for schema changes and dispatch, and token/cost telemetry. |
+| **Snyk** | Run dependency and static source scans on the submission commit and capture CI checks. If CI setup stalls, retain verified local scan results and mark CI partial. | Missing scan, CI setup, or remediation. |
+| **Nexla** | If required and provisioned, prioritize a read-only source feeding discovery. Show a resulting cited record. If optional, attempt after the three targets above. | Broader connector and data flow work. |
+
+The pasted rubric lists **20 points each for Band and Flexprice**. Confirm qualifying demonstrations and Snyk scoring at kickoff. If core QA fails at 2:10, use the remaining build time on the broken path. Cut deeper competitor work and stretch UI before approval and audit. If Gmail fails, end the run at **Approved**. If research or graph access fails, label any fixture and disclose the affected capability. If deployment fails, record the local run and disclose its status. At freeze, record each target as **Live**, **Partial**, or **Deferred**, with proof or reason.
+
+## Acceptance tests and handoff
+
+| Check | Pass condition |
+| --- | --- |
+| **ICP and research** | Approve an edited ICP. Unapproved and superseded versions cannot start discovery. Domains are unique. Real URLs support account and competitor claims. A negative signal changes the recommendation. |
+| **Enrichment and graph** | Hunter uncertainty is visible. The live Neo4j path matches the account and supports a specific draft claim. An unrelated citation is rejected. |
+| **Approval and dispatch** | Unauthenticated access, unapproved or rejected send, edit after approval, stale revision, and recipient override are blocked. Two simultaneous sends produce one provider call. Failure and timeout leave the stage unchanged. Confirmed delivery produces one event. |
+| **Pipeline and privacy** | After refresh, the lead, event, actor, time, and count agree. Public repo, browser assets, logs, and recording contain no credentials or unmasked prospect contact data. |
+| **Bonus proof** | Capture the Flexprice event and pre-Hunter block, real Band handoff, and Snyk CI run for targets that ship. Record gaps against each full requirement. |
+
+**Submission package:** hosted prototype, public source repo with setup, architecture document, and a **2–3 minute demo video**. The architecture document covers the graph labels and query, Claude evidence-to-draft flow, exact-revision approval, dispatch reservation, and live integrations. Record GeoFlow intake, approved ICP, Contact/Hold evidence, graph and contact, an edit requiring reapproval, test delivery, and the persisted pipeline update. Close with verified bonus proof. Use the final README to identify capabilities that ran live, used fixtures, or were deferred.
+
+## Progress on `main`
+
+Update this checklist alongside each merged milestone. The frontend and integration owner coordinates updates using both teammates’ PR notes and test evidence. The procedure is in [CLAUDE.md](CLAUDE.md).
+
+| Milestone | Owner | Status | Verification or next action |
+| --- | --- | --- | --- |
+| Contract and shared fixture | Backend | Planned | Publish the example response and routes. |
+| Strategy, discovery, and deployment shell | Both | Planned | Show one approved ICP and one persisted cited account. |
+| Graph, enrichment, and grounded draft | Both | Planned | Verify one real graph path and the Hunter result. |
+| Review, dispatch, and pipeline | Both | Planned | Run approval and duplicate-send checks, then verify inbox receipt and refresh. |
+| Flexprice | Backend | Planned | Verify access, event, and pre-Hunter credit block. |
+| Band Desktop and Snyk | Frontend | Planned | Verify access, handoff proof, and CI scan results. |
+| Nexla | Backend | Conditional | Confirm whether the organizer requires it and provides access. |
+| Submission | Frontend | Planned | Verify deployed URL, repo, architecture document, and video. |
