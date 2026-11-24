@@ -27,12 +27,12 @@ const NAV = [
   { href: "/pipeline/", label: "Pipeline", icon: KanbanSquare },
 ];
 
-const CHAT = { href: "/chat/", label: "Chat", icon: MessageCircle };
+const AGENT = { href: "/chat/", label: "Agent", icon: MessageCircle };
 
 export function AppShell({ commands, children, fullWidth = false }: { fullWidth?: boolean; commands?: React.ReactNode; children: React.ReactNode }) {
   const { status, mode, loadError, refresh, workspace } = useWorkspace();
   const pathname = usePathname();
-  const chat = pathname === CHAT.href;
+  const chat = pathname === AGENT.href;
   const isHome = pathname === "/";
   const showWorkspace = status === "ready" && workspace !== null;
   const fullPageChat = (isHome || chat) && showWorkspace;
@@ -62,7 +62,7 @@ export function AppShell({ commands, children, fullWidth = false }: { fullWidth?
               <NavLink key={item.href} item={item} active={item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)} />
             ))}
           </div>
-          <NavLink item={CHAT} active={chat} className="border-l md:border-t md:border-l-0" />
+          <NavLink item={AGENT} active={chat} className="border-l md:border-l-0" />
         </nav>
 
         <div className={cn("flex min-w-0 flex-1 flex-col", fullPageChat && "min-h-0")}>
@@ -93,7 +93,7 @@ export function AppShell({ commands, children, fullWidth = false }: { fullWidth?
   );
 }
 
-function NavLink({ item: { href, label, icon: Icon }, active, className }: { item: typeof CHAT; active: boolean; className?: string }) {
+function NavLink({ item: { href, label, icon: Icon }, active, className }: { item: typeof AGENT; active: boolean; className?: string }) {
   return (
     <Link
       href={href}
