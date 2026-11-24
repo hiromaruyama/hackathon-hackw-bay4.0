@@ -30,6 +30,8 @@ Fill `backend/.env` locally. The file is ignored by Git. Restart the service aft
 
 For a one-off Gmail setup, create a Google OAuth web client for user data with `https://developers.google.com/oauthplayground` as its authorized redirect URI. In Testing, add the sender as a test user. In Google's OAuth Playground, use your own client credentials, authorize `https://www.googleapis.com/auth/gmail.send`, and exchange the code for a refresh token. Store the values in the ignored local environment file or Render secrets. The backend uses the Gmail REST endpoint after human approval. [Google OAuth setup](https://developers.google.com/identity/protocols/oauth2/web-server#offline)
 
+In Nexla, open the transformed Nexset's **Details → Overview → Data API** and select **Copy cURL**. Save the HTTPS URL with its `api_key` parameter removed as `NEXLA_SYNC_URL`. Save the parameter value as `NEXLA_ACCESS_TOKEN`.
+
 ## Flexprice Sandbox
 
 1. In **Sandbox → Developers → API Keys**, create a secret key for `FLEXPRICE_API_KEY`. Set `FLEXPRICE_BASE_URL` to the matching regional API if needed.
@@ -41,7 +43,7 @@ The workspace shows the most recent Flexprice balance and the remaining allowanc
 
 ## Deployment handoff
 
-Build Next.js as a static export. Copy the exported files into the backend runtime and set `SIGNAL_STATIC_DIR` to that directory at startup. FastAPI serves those files and the API on the same origin. Set the external HTTPS origin explicitly or let `RENDER_EXTERNAL_URL` supply it. Run Uvicorn with one worker on `0.0.0.0` and Render's assigned port. Set credentials as deployment secrets. Keep Neo4j as the persistent store and provide judge sign-in privately.
+Build Next.js with `output: 'export'`. For multiple page routes, set `trailingSlash: true` so FastAPI can serve each route's `index.html`. Copy the exported files into the backend runtime and set `SIGNAL_STATIC_DIR` to that directory at startup. FastAPI serves those files and the API on the same origin. Set the external HTTPS origin explicitly or let `RENDER_EXTERNAL_URL` supply it. Run Uvicorn with one worker on `0.0.0.0` and Render's assigned port. Set credentials as deployment secrets. Keep Neo4j as the persistent store and provide judge sign-in privately. [Next.js static export configuration](https://nextjs.org/docs/app/guides/static-exports#configuration)
 
 ## Data flow and approval boundary
 

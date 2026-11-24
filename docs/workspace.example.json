@@ -82,5 +82,29 @@
     "pending_approval_count": 0,
     "matched_to_contacted_rate": 0
   },
-  "usage": null
+  "usage": {
+    "balance": 5,
+    "available_for_enrichment": 4,
+    "enrichment_cost": 1,
+    "checked_at": "2026-11-24T18:07:00Z",
+    "status": "ready",
+    "events": [
+      {
+        "id": "usage-example-enrichment",
+        "account_id": "acct-example",
+        "operation": "leads_enriched",
+        "units": 1,
+        "status": "accepted",
+        "at": "2026-11-24T18:07:00Z"
+      },
+      {
+        "id": "usage-example-graph",
+        "account_id": "acct-example",
+        "operation": "graph_query_evaluated",
+        "units": 1,
+        "status": "accepted",
+        "at": "2026-11-24T18:08:00Z"
+      }
+    ]
+  }
 }
