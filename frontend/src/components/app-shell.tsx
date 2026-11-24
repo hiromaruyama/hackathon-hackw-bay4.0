@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Building2, Home, KanbanSquare, PenLine, RefreshCw, Share2, Target } from "lucide-react";
+import { Bot, Building2, Home, KanbanSquare, PenLine, RefreshCw, Share2, Target } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,21 +27,19 @@ const NAV = [
 export function AppShell({ commands, children }: { commands?: React.ReactNode; children: React.ReactNode }) {
   const { status, mode, loadError, refresh, workspace } = useWorkspace();
   const pathname = usePathname();
-  const productName = workspace?.product?.name ?? "GeoFlow";
 
   return (
     <div className="flex min-h-screen flex-col">
       <header className="flex h-12 shrink-0 items-center gap-4 border-b bg-topbar px-4 text-foreground">
         <Link href="/" className="flex items-center gap-2.5 text-[19px] font-bold whitespace-nowrap text-foreground no-underline hover:text-foreground">
-          <svg aria-hidden width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M2 12h3l3-7 4 14 3-7h7" />
-          </svg>
+          <Bot aria-hidden size={23} className="text-primary">
+            <path d="M10.5 16.5q1.5 2 3 0" />
+          </Bot>
           Signal
-          <span className="text-sm font-normal text-muted-foreground">/ {productName}</span>
         </Link>
         <div className="ml-auto flex items-center gap-3">
           {mode === "sample" ? (
-            <span className="rounded-md border border-dashed border-input px-2 py-0.5 text-xs text-muted-foreground whitespace-nowrap">Sample data</span>
+            <Badge variant="outline">Sample data</Badge>
           ) : null}
         </div>
       </header>

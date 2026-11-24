@@ -85,7 +85,10 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
           </TableHeader>
           <TableBody>
             {rows.map((a) => {
-              const signal = a.recommendation === "reject" ? a.negative_signal ?? a.signal : a.signal ?? a.negative_signal;
+              const risk = a.negative_signal;
+              const signal = risk && a.recommendation === "reject" ? null : a.signal;
+              const summary = signal?.summary ?? risk?.reason;
+              const signalDate = signal ? signal.occurred_on : a.evidence.find((e) => e.id === risk?.evidence_id)?.published_at;
               const enr = enrichmentText(a.enrichment_status, a.contact?.verification_status);
               const stage = stageOf(a);
               return (
@@ -109,8 +112,8 @@ export function AccountsTable({ workspace, title = "Accounts" }: { workspace: Wo
                     <Verdict value={a.recommendation} />
                   </TableCell>
                   <TableCell className="max-w-[240px] py-3 whitespace-normal">
-                    {signal ? signal.summary : <span className="text-muted-foreground">No supported signal</span>}
-                    <span className="block text-[13px] text-muted-foreground">{signal ? day(signal.occurred_on) : `Researched ${time(a.researched_at)}`}</span>
+                    {summary ?? <span className="text-muted-foreground">No supported signal</span>}
+                    <span className="block text-[13px] text-muted-foreground">{summary ? day(signalDate) : `Researched ${time(a.researched_at)}`}</span>
                   </TableCell>
                   <TableCell className="py-3 whitespace-normal">
                     {a.contact ? a.contact.role : <span className="text-muted-foreground">—</span>}

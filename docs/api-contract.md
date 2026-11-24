@@ -26,4 +26,6 @@ Fields that may be absent are documented as `null` in the example. Scores are in
 
 The example response includes a successful credit check and accepted enrichment and graph events. When Flexprice is enabled, `usage` contains `balance` (last provider reading), `available_for_enrichment` (remaining demo allowance), `enrichment_cost`, `checked_at`, `status`, and `events`. With Flexprice disabled, `usage` is `null`. Events provide `id`, `account_id`, `operation`, `units`, `status`, and `at`. A blocked lookup returns `402` with code `insufficient_enrichment_credits`. Refresh `GET /api/workspace` to show the persisted credit check and event.
 
+An ICP `expansion` has `segment`, `reason`, and one `evidence` object. An account's `negative_signal` has `reason`, `evidence_id`, and `hard_exclusion`. Its cited source is in the account's `evidence` list. A positive `signal` has its own `id`, `summary`, and `occurred_on`.
+
 Errors use `{"error":{"code":"…","message":"…"}}`. Handle `401` by opening sign-in, `409` by refreshing the workspace, and `422` by checking inputs. Show a retryable message for dependency failures. A send with `pending_outcome` needs manual verification and stays locked. A repeated send for that revision reads the saved attempt. It never sends again.
