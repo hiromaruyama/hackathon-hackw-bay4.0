@@ -157,6 +157,7 @@ export interface Competitor {
   pricing: string | null;
   evidence: Evidence[];
   category?: "direct" | "indirect" | "alternative";
+  plans?: { name: string; price: string | null; evidence_id: string }[];
 }
 
 export interface ActivityEvent {
@@ -192,6 +193,7 @@ export interface Lead {
 export interface PipelineEvent {
   id: string;
   account_id: string;
+  revision?: number | null;
   from_stage?: Stage | null;
   to_stage: Stage;
   test_send: boolean;

@@ -88,7 +88,7 @@ class GraphTransaction:
                 'MERGE (e:Evidence {workspace: $workspace, id: item.id}) SET e += item '
                 'MERGE (c)-[:EVIDENCED_BY]->(e)',
                 product=product.id, id=stable_id('competitor', competitor.name.casefold()),
-                fields=competitor.model_dump(exclude={'evidence'}),
+                fields=competitor.model_dump(exclude={'evidence', 'plans'}),
                 evidence=[item.model_dump(mode='json') for item in competitor.evidence],
             ).consume()
 

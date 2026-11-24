@@ -64,7 +64,7 @@ export function enrichmentText(status: EnrichmentStatus, verification?: string |
 }
 
 export function actorLabel(actor: string) {
-  if (actor === "demo") return "You";
+  if (actor === "demo") return "Demo rep";
   if (actor === "system") return "Signal";
   return actor;
 }

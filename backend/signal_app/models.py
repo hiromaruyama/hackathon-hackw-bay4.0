@@ -225,6 +225,12 @@ class Contact(BaseModel):
     linkedin_url: str | None = None
 
 
+class CompetitorPlan(BaseModel):
+    name: str
+    price: str | None = None
+    evidence_id: str
+
+
 class Competitor(BaseModel):
     name: str
     positioning: str
@@ -232,6 +238,7 @@ class Competitor(BaseModel):
     pricing: str | None = None
     evidence: list[Evidence]
     category: Literal['direct', 'indirect', 'alternative'] = 'direct'
+    plans: list[CompetitorPlan] = Field(default_factory=list)
 
 
 class DraftView(BaseModel):

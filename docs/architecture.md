@@ -48,6 +48,8 @@ An initial email can be extended into a follow-up email and a LinkedIn message. 
 
 The send route requires a valid session and configured origin. A Neo4j transaction locks and reads the draft, checks the current revision, snapshot, schedule, recipient, and suppression, then writes one reservation. The send route calls Gmail after commit. Provider acceptance saves one attempt result and the corresponding pipeline event together. Failure preserves the stage. An ambiguous outcome locks the draft for manual inbox review. The provider call has automatic retries disabled.
 
+The same workspace write lock enforces the rolling hourly limit before reserving a new send. The default is six attempts. `SIGNAL_TEST_SEND_LIMIT_PER_HOUR` sets the limit. A repeated request reads an existing reservation. The pipeline identifies the confirmation as Gmail automation and retains the requesting rep and exact revision. Rep stage changes keep their own source and timestamp.
+
 The intake and research models receive scoped text and typed schemas. Their output cannot call dispatch or mutate the graph directly. The application validates evidence and copy and executes fixed, parameterized queries. Outbound logs include actor, revision, time, and outcome. They omit the email content and credentials.
 
 ## Feedback, analytics, and credits

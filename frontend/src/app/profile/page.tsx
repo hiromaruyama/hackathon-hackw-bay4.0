@@ -170,7 +170,7 @@ function Profile() {
   return (
     <>
       <div className="flex flex-col gap-1">
-        <h1 className="text-[22px] leading-tight font-bold">Customer profile</h1>
+        <h1 className="text-[22px] leading-tight font-bold">Product and target buyers</h1>
         <p className="text-muted-foreground">
           {icp
             ? icp.approved
@@ -182,7 +182,7 @@ function Profile() {
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <Panel aria-labelledby="intake-title">
-          <PanelHeader title="What you sell" id="intake-title" />
+          <PanelHeader title="Your product" id="intake-title" />
           <Tabs value={intakeTab} onValueChange={setIntakeTab} className="gap-4">
             <TabsList aria-label="Product intake">
               <TabsTrigger value="form">Form</TabsTrigger>
@@ -233,7 +233,7 @@ function Profile() {
         </Panel>
 
         <Panel aria-labelledby="icp-title">
-          <PanelHeader title={icp ? `Profile, revision ${icp.revision}` : "Profile"} id="icp-title">
+          <PanelHeader title={icp ? `Ideal customer profile, revision ${icp.revision}` : "Ideal customer profile"} id="icp-title">
             {icp ? (
               <span className={cn("text-sm font-semibold", icp.approved && !dirty ? "text-success" : "text-warning")}>
                 {icp.approved && !dirty ? "Approved" : dirty ? "Edited, not approved" : "Draft"}
