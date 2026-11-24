@@ -95,7 +95,7 @@ function AssistantPanel({ fullPage }: { fullPage: boolean }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className={cn("flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-5", fullPage ? "px-1" : "px-5")}>
         {lines.length === 0 && !connected ? (
-          <section aria-label="Suggested prompts" className={cn("my-auto flex flex-col gap-3 py-4", fullPage && "mx-auto w-full max-w-lg")}>
+          <section aria-label="Suggested prompts" className={cn("mt-auto flex flex-col gap-3 pb-1", fullPage && "mx-auto w-full")}>
             <h2 className="text-xl font-semibold tracking-tight">Explore your workspace</h2>
             <ul className="grid gap-2">
               {STARTER_PROMPTS.map((prompt) => (
