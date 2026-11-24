@@ -24,9 +24,9 @@ Signal uses Neo4j, Claude, Tavily, Hunter, Gmail, and Next.js with Tailwind and 
 
 | Bonus | Evidence | Open work |
 | --- | --- | --- |
-| Band Desktop | The signed-in daemon and three connected Express agents were verified. | Four specialized Planner, Builder, Reviewer, and Security roles must work a case through `@mention` handoffs. Capture human decisions for schema changes and dispatch, plus shared messages, session tokens, and cost telemetry. |
+| Band Desktop | Four specialized roles exchanged routed Band mentions and corrected unsupported claims in a private synthetic case. | Capture the final fixture outcome, the human decisions, and attributable session tokens and cost. |
 | Flexprice | Sandbox accepted Lead Enriched, Graph Query Evaluated, and Outreach Sent events. The lower-balance check blocked enrichment before Hunter. The ledger allocated 1.15 credits to one lead. | Retain the Sandbox proof for judging. |
-| Snyk | Authenticated dependency checks reported zero findings. Authenticated Snyk Code completed and found one high, one medium, and six low findings on the checked baseline. | Add the scoped repository scanner credential and run the CI job. The configured job records each SCA and Snyk Code outcome separately. |
+| Snyk | After fixing the catalog and evidence link findings and using generated test credentials, authenticated backend SCA, frontend SCA, and Snyk Code passed in [GitHub Actions](https://github.com/hiromaruyama/hackathon-hackw-bay4.0/actions/runs/45496488759). | Retain the CI run as the submission evidence. |
 
 Nexla also returned five records that saved as citations in Neo4j.
 
