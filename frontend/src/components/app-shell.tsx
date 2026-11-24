@@ -35,8 +35,8 @@ export function AppShell({ commands, children, fullWidth = false, hasEmbeddedAge
   const chat = pathname === AGENT.href;
   const isHome = pathname === "/";
   const showWorkspace = status === "ready" && workspace !== null;
-  const fullPageChat = (isHome || chat) && showWorkspace;
-  const showLauncher = showWorkspace && !fullPageChat && !hasEmbeddedAgent;
+  const fullPageChat = chat && showWorkspace;
+  const showLauncher = showWorkspace && !isHome && !chat && !hasEmbeddedAgent;
 
   return (
     <div className={cn("flex min-h-screen flex-col", fullPageChat && "h-dvh min-h-dvh overflow-hidden")}>
@@ -72,7 +72,7 @@ export function AppShell({ commands, children, fullWidth = false, hasEmbeddedAge
               {commands}
             </div>
           ) : null}
-          <main className={cn("mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6", fullWidth && "max-w-none", showLauncher && "max-md:pb-20", fullPageChat && "min-h-0 flex-1", isHome && showWorkspace && "max-w-none gap-0 p-0 md:p-0")}>
+          <main className={cn("mx-auto flex w-full max-w-[1280px] flex-col gap-6 p-4 md:p-6", fullWidth && "max-w-none", showLauncher && "max-md:pb-20", fullPageChat && "min-h-0 flex-1")}>
             {status === "ready" && loadError ? (
               <InlineAlert tone="danger" title="Couldn't refresh the workspace" action={<Button variant="outline" size="sm" onClick={() => void refresh()}>Retry</Button>}>
                 {loadError.message} You're seeing the last saved view.
