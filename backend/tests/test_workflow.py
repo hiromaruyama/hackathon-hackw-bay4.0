@@ -702,6 +702,39 @@ def test_contact_lookup_is_saved_without_a_draft_and_reused(system):
     assert len(providers.lookups) == 1
     assert providers.sent == []
 
+def test_refresh_preserves_saved_accounts_missing_from_new_results(system):
+    client, providers = system
+    original = discover_accounts(client)
+    contact = next(a for a in original['accounts'] if a['recommendation'] == 'contact')
+    draft = get_draft(client, contact['id'])
+    providers.only_hold = True
+    refreshed = post(client, '/api/discover', {'revision': original['approved_icp_revision'], 'refresh': True})
+    item = next(a for a in refreshed['accounts'] if a['id'] == contact['id'])
+    assert {a['id'] for a in refreshed['accounts']} == {a['id'] for a in original['accounts']}
+    assert item['draft'] == draft
+    assert item['enrichment_status'] == 'verified'
+
+
+@pytest.mark.parametrize('system', [{'flexprice_enabled': True}], indirect=True)
+def test_new_sandbox_wallet_credits_unlock_one_previously_blocked_lookup(system):
+    client, providers = system
+    w = discover_accounts(client)
+    first, second = [a for a in w['accounts'] if a['recommendation'] == 'contact']
+    post(client, f'/api/accounts/{first["id"]}/enrich')
+    path = f'/api/accounts/{second["id"]}/enrich'
+    assert post(client, path, expected=402)['error']['code'] == 'insufficient_enrichment_credits'
+    assert len(providers.lookups) == 1
+    # Existing workspaces persisted the last balance on Usage before the exact Decimal field was added.
+    def remove_new_balance_field(graph, state):
+        state.billing_balance_observed = None
+    providers.store.write(remove_new_balance_field)
+    providers.balance = Decimal('2')
+    recovered = post(client, path)
+    assert recovered['usage']['available_for_enrichment'] == 0
+    assert len(providers.lookups) == 2
+    post(client, path)
+    assert len(providers.lookups) == 2
+
 
 def test_weak_research_makes_at_most_one_focused_search(system):
     client, providers = system

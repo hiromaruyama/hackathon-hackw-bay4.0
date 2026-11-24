@@ -40,6 +40,13 @@ class GraphTransaction:
         row = self.run(query + 'RETURN d.data AS data', id=draft_id).single()
         return Draft.model_validate_json(row['data']) if row else None
 
+    def drafts_for_revision(self, revision: int) -> dict[str, Draft]:
+        rows = self.run(
+            'MATCH (d:Draft {workspace: $workspace, icp_revision: $revision}) RETURN d.id AS id, d.data AS data',
+            revision=revision,
+        )
+        return {row['id']: Draft.model_validate_json(row['data']) for row in rows}
+
     def save_draft(self, draft: Draft) -> None:
         self.run(
             'MERGE (d:Draft {workspace: $workspace, id: $id}) '
@@ -196,26 +203,34 @@ class GraphTransaction:
             ).consume()
 
     def graph_path(self, product_id: str, account: Account) -> list[GraphStep]:
-        row = self.run(
+        return self.graph_paths(product_id, [account]).get(account.id, [])
+
+    def graph_paths(self, product_id: str, accounts: list[Account]) -> dict[str, list[GraphStep]]:
+        if not accounts:
+            return {}
+        rows = self.run(
+            'UNWIND $accounts AS matched '
             'MATCH (p:Product {workspace: $workspace, id: $product})'
-            '-[:MATCHED_TO {icp_revision: $revision}]->(c:Company {workspace: $workspace, id: $account}) '
-            'OPTIONAL MATCH (c)-[:HAS_SIGNAL {icp_revision: $revision}]->(s:Signal {id: $signal})'
+            '-[:MATCHED_TO {icp_revision: matched.revision}]->(c:Company {workspace: $workspace, id: matched.id}) '
+            'OPTIONAL MATCH (c)-[:HAS_SIGNAL {icp_revision: matched.revision}]->(s:Signal {id: matched.signal})'
             '-[:EVIDENCED_BY]->(e:Evidence {workspace: $workspace}) '
             'RETURN p.id AS product_id, p.name AS product, c.id AS account_id, c.name AS company, '
             's.id AS signal_id, s.summary AS signal, e.id AS evidence_id',
-            product=product_id, revision=account.icp_revision, account=account.id,
-            signal=account.signal.id if account.signal else None,
-        ).single()
-        if row is None:
-            return []
-        result = [
-            GraphStep(id=row['product_id'], label='Product', name=row['product'], relationship='MATCHED_TO'),
-            GraphStep(id=row['account_id'], label='Company', name=row['company'],
-                      relationship='HAS_SIGNAL' if row['signal_id'] else None, evidence_id=row['evidence_id']),
-        ]
-        if row['signal_id']:
-            result.append(GraphStep(id=row['signal_id'], label='Signal', name=row['signal'], evidence_id=row['evidence_id']))
-        return result
+            product=product_id,
+            accounts=[{'id': account.id, 'revision': account.icp_revision, 'signal': account.signal.id if account.signal else None}
+                      for account in accounts],
+        )
+        paths = {}
+        for row in rows:
+            steps = [
+                GraphStep(id=row['product_id'], label='Product', name=row['product'], relationship='MATCHED_TO'),
+                GraphStep(id=row['account_id'], label='Company', name=row['company'],
+                          relationship='HAS_SIGNAL' if row['signal_id'] else None, evidence_id=row['evidence_id']),
+            ]
+            if row['signal_id']:
+                steps.append(GraphStep(id=row['signal_id'], label='Signal', name=row['signal'], evidence_id=row['evidence_id']))
+            paths[row['account_id']] = steps
+        return paths
 
 
 class Neo4jStore:
