@@ -8,19 +8,19 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import type { Account } from "@/lib/types";
+import { verdictLabel } from "@/lib/format";
+import type { Account, Recommendation } from "@/lib/types";
 
-export const graphCategories = ["Product", "Company", "Signal", "Person", "Competitor"] as const;
-export type GraphCategory = typeof graphCategories[number];
+export const graphVerdicts = ["contact", "hold", "reject"] as const;
 
 export type GraphFilterState = {
-  categories: Set<GraphCategory>;
+  verdicts: Set<Recommendation>;
   scores: Set<number>;
   companies: Set<string>;
 };
 
 export const emptyGraphFilters: GraphFilterState = {
-  categories: new Set(),
+  verdicts: new Set(),
   scores: new Set(),
   companies: new Set(),
 };
@@ -54,7 +54,7 @@ export function GraphFilters({
   const [query, setQuery] = useState("");
   const results = findGraphAccounts(accounts, query);
   const scores = [...new Set(accounts.map((account) => account.fit_score))].sort((a, b) => b - a);
-  const count = filters.categories.size + filters.scores.size + filters.companies.size;
+  const count = filters.verdicts.size + filters.scores.size + filters.companies.size;
 
   return (
     <Sheet onOpenChange={(open) => { if (!open) setQuery(""); }}>
@@ -66,18 +66,18 @@ export function GraphFilters({
       <SheetContent className="w-full gap-0 sm:max-w-sm">
         <SheetHeader>
           <SheetTitle>Graph filters</SheetTitle>
-          <SheetDescription>Uncheck categories, fit scores, or companies to hide them from the graph.</SheetDescription>
+          <SheetDescription>Uncheck verdicts, fit scores, or companies to hide them from the graph.</SheetDescription>
         </SheetHeader>
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-5 px-4 pb-4">
             <fieldset className="flex flex-wrap gap-x-4 gap-y-3">
-              <legend className="mb-2 font-semibold">Node categories</legend>
-              {graphCategories.map((category) => (
+              <legend className="mb-2 font-semibold">Account verdicts</legend>
+              {graphVerdicts.map((verdict) => (
                 <FilterOption
-                  key={category}
-                  label={category}
-                  checked={!filters.categories.has(category)}
-                  onChange={() => onChange({ ...filters, categories: toggled(filters.categories, category) })}
+                  key={verdict}
+                  label={verdictLabel[verdict]}
+                  checked={!filters.verdicts.has(verdict)}
+                  onChange={() => onChange({ ...filters, verdicts: toggled(filters.verdicts, verdict) })}
                 />
               ))}
             </fieldset>

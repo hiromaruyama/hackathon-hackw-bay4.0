@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { GraphInsights } from "@/components/graph-insights";
-import { EvidenceList, GraphPath, InlineAlert, Panel, PanelHeader, Verdict } from "@/components/signal";
+import { EvidenceList, InlineAlert, Panel, PanelHeader, Verdict } from "@/components/signal";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { ApiError } from "@/lib/api";
@@ -143,8 +143,11 @@ function AccountView() {
           </Panel>
 
           <Panel aria-labelledby="graph-title">
-            <PanelHeader title="Graph path" id="graph-title" />
-            <GraphPath path={a.graph_path} />
+            <PanelHeader title="Knowledge graph" id="graph-title">
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/graph/?account=${encodeURIComponent(a.id)}`}>Open company graph</Link>
+              </Button>
+            </PanelHeader>
           </Panel>
           {mode === "live" ? <GraphInsights key={`${a.id}-${a.researched_at}`} accountId={a.id} /> : null}
 

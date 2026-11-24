@@ -1,29 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useRef, useState } from "react";
 import { ArrowDown, Building2, Check, ChevronRight, Compass, Layers2, Package, Radio, Search, UserRound, Waypoints } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { AccountSearch, emptyGraphFilters, findGraphAccounts, graphCategories, GraphFilters, type GraphCategory } from "@/components/graph-filters";
+import { AccountSearch, emptyGraphFilters, findGraphAccounts, GraphFilters } from "@/components/graph-filters";
+import { VerdictMap } from "@/components/verdict-map";
 import { GraphInsights } from "@/components/graph-insights";
-import { EvidenceList } from "@/components/signal";
+import { EvidenceList, InlineAlert } from "@/components/signal";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { enrichmentText } from "@/lib/format";
-import type { Account, Competitor, GraphInsight, GraphNode, Product } from "@/lib/types";
+import type { Account, Competitor, GraphNode, Product, Recommendation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/lib/workspace-context";
 
 export default function GraphPage() {
   return (
     <AppShell>
-      <Explorer />
+      <Suspense><Explorer /></Suspense>
     </AppShell>
   );
 }
@@ -31,19 +33,22 @@ export default function GraphPage() {
 function Explorer() {
   const { workspace, mode } = useWorkspace();
   const { accounts, product, competitors, competitor } = workspace!;
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const router = useRouter();
+  const selectedId = useSearchParams().get("account");
+  const requested = accounts.find((item) => item.id === selectedId);
   const [filters, setFilters] = useState(emptyGraphFilters);
-  const [view, setView] = useState("overview");
+  const [branch, setBranch] = useState<Recommendation | null>(requested?.recommendation ?? null);
   const pathTab = useRef<HTMLButtonElement>(null);
-  const availableAccounts = accounts.filter((item) => !filters.scores.has(item.fit_score) && !filters.companies.has(item.id));
-  const account = availableAccounts.find((item) => item.id === selectedId)
+  const availableAccounts = accounts.filter((item) => !filters.verdicts.has(item.recommendation) && !filters.scores.has(item.fit_score) && !filters.companies.has(item.id));
+  const selected = availableAccounts.find((item) => item.id === selectedId);
+  const account = selected
     ?? availableAccounts.find((item) => item.graph_path.length > 0)
     ?? availableAccounts[0];
   const rivals = competitors?.length ? competitors : competitor ? [competitor] : [];
 
   function openAccountPath(id: string) {
-    setSelectedId(id);
-    setView("path");
+    setBranch(availableAccounts.find((item) => item.id === id)?.recommendation ?? null);
+    router.push(`/graph/?account=${encodeURIComponent(id)}`, { scroll: false });
     pathTab.current?.focus();
   }
 
@@ -59,27 +64,30 @@ function Explorer() {
         ) : null}
       </div>
 
+      {selectedId && !requested ? (
+        <InlineAlert tone="info" title="This company is no longer in the workspace">Choose an account from the map.</InlineAlert>
+      ) : null}
       {account ? (
-        <Tabs value={view} onValueChange={setView} className="gap-4 pb-12">
+        <Tabs value={selected ? "path" : "overview"} activationMode="manual" onValueChange={(value) => {
+          if (value === "path") openAccountPath(account.id);
+          else router.push("/graph/", { scroll: false });
+        }} className="gap-4 pb-12">
           <TabsList aria-label="Graph view">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger ref={pathTab} value="path">Account path</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
-            <GraphOverview
-              accounts={availableAccounts}
-              product={product}
-              rivals={rivals}
-              hidden={filters.categories}
-              onSelect={openAccountPath}
-            />
+            <div className="flex flex-col gap-4">
+              <VerdictMap accounts={availableAccounts} product={product} hidden={filters.verdicts} branch={branch} onBranch={setBranch} onSelect={openAccountPath} />
+              {rivals.length ? <Card className="px-4 py-1 sm:px-6"><CompetitorRelationships rivals={rivals} /></Card> : null}
+            </div>
           </TabsContent>
           <TabsContent value="path">
             <div className="flex flex-col gap-4">
               <p role="status" className="sr-only">{account.name} selected</p>
-              <AccountPath account={account} product={product} sample={mode === "sample"} hidden={filters.categories} />
-              {mode === "live" ? <GraphInsights key={account.id} accountId={account.id} hiddenKinds={hiddenInsights(filters.categories)} /> : null}
-              <MoreRelationships key={`relationships-${account.id}`} account={account} hidden={filters.categories} />
+              <AccountPath account={account} product={product} sample={mode === "sample"} />
+              {mode === "live" ? <GraphInsights key={account.id} accountId={account.id} /> : null}
+              <MoreRelationships key={`relationships-${account.id}`} account={account} />
             </div>
           </TabsContent>
         </Tabs>
@@ -101,86 +109,6 @@ function Explorer() {
         </Card>
       )}
     </>
-  );
-}
-
-function GraphOverview({
-  accounts,
-  product,
-  rivals,
-  hidden,
-  onSelect,
-}: {
-  accounts: Account[];
-  product: Product | null;
-  rivals: Competitor[];
-  hidden: Set<GraphCategory>;
-  onSelect: (id: string) => void;
-}) {
-  const showCompanies = !hidden.has("Company");
-  const showProduct = product && !hidden.has("Product");
-  const scores = new Map<number, Account[]>();
-  for (const account of findGraphAccounts(accounts, "")) {
-    const group = scores.get(account.fit_score) ?? [];
-    group.push(account);
-    scores.set(account.fit_score, group);
-  }
-
-  return (
-    <Card className="min-w-0 gap-4 py-4 wrap-anywhere sm:py-5" role="region" aria-labelledby="graph-overview-title">
-      <CardHeader className="px-4 sm:px-6">
-        <CardTitle><h2 id="graph-overview-title">Companies by fit</h2></CardTitle>
-        {showCompanies ? <CardDescription>Select a company to inspect its path and sources.</CardDescription> : null}
-        <CardAction><Badge variant="secondary">{accounts.length} {accounts.length === 1 ? "company" : "companies"}</Badge></CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4 px-4 sm:px-6">
-        <GraphLegend />
-        <div className="flex flex-col rounded-lg border bg-subtle p-3 sm:p-4">
-          {showProduct ? (
-            <div className="flex w-full max-w-64">
-              <NodeBox node={{ id: product.id, label: "Product", name: product.name, relationship: null, evidence_id: null }} />
-            </div>
-          ) : null}
-          {showCompanies ? (
-            <>
-              {showProduct ? <ArrowDown aria-hidden className="ml-3.5 size-5 text-primary sm:ml-4" /> : null}
-              <div className={cn("flex flex-col gap-5", showProduct && "border-l-2 border-primary/35 pl-3 sm:pl-4")}>
-                {[...scores].sort(([a], [b]) => b - a).map(([score, companies]) => (
-                  <section key={score} aria-label={`Fit ${score}`} className="flex flex-col gap-2">
-                    <h3 className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">Fit {score}</Badge>
-                      <span className="text-xs font-normal text-muted-foreground">{companies.length} {companies.length === 1 ? "company" : "companies"}</span>
-                    </h3>
-                    <ul role="list" className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {companies.map((company) => (
-                        <li key={company.id} className={cn("min-w-0 rounded-md border min-[360px]:only:col-span-2 lg:only:col-span-1", nodeStyles.Company.surface)}>
-                          <Button
-                            variant="ghost"
-                            className="h-full min-h-11 w-full justify-between whitespace-normal px-2.5 py-2 text-left sm:px-3"
-                            onClick={() => onSelect(company.id)}
-                          >
-                            <span className="min-w-0">{company.name}</span>
-                            <span className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-                              {!hidden.has("Signal") && (company.signal || company.negative_signal) ? (
-                                <span title="Saved signal" className={nodeStyles.Signal.color}><Radio aria-hidden /><span className="sr-only">Saved signal</span></span>
-                              ) : null}
-                              {!hidden.has("Person") && company.contact ? (
-                                <span title="Saved contact" className={nodeStyles.Person.color}><UserRound aria-hidden /><span className="sr-only">Saved contact</span></span>
-                              ) : null}
-                            </span>
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                ))}
-              </div>
-            </>
-          ) : <p role="status" className="py-2 text-sm text-muted-foreground">Company nodes are hidden by your category filters.</p>}
-        </div>
-        {!hidden.has("Competitor") && rivals.length ? <CompetitorRelationships rivals={rivals} /> : null}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -238,9 +166,9 @@ function AccountPicker({
   );
 }
 
-function AccountPath({ account, product, sample, hidden }: { account: Account; product: Product | null; sample: boolean; hidden: Set<GraphCategory> }) {
+function AccountPath({ account, product, sample }: { account: Account; product: Product | null; sample: boolean }) {
   const saved = account.graph_path.length > 0;
-  const path = filterPath(saved ? account.graph_path : researchPath(product, account), hidden);
+  const path = saved ? account.graph_path : researchPath(product, account);
   const origin = saved ? (sample ? "Sample path" : "Neo4j") : "Saved research";
   const evidenceIds = new Set(path.map((node) => node.evidence_id));
   const evidence = account.evidence.filter((source) => evidenceIds.has(source.id));
@@ -261,13 +189,9 @@ function AccountPath({ account, product, sample, hidden }: { account: Account; p
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-4 px-4 sm:px-6">
-        {path.length ? (
-          <div className="rounded-lg border bg-subtle p-3 lg:p-4">
-            <RelationshipPath path={path} account={account} />
-          </div>
-        ) : (
-          <p role="status" className="rounded-lg border bg-subtle p-4 text-sm text-muted-foreground">No path nodes match your category filters.</p>
-        )}
+        <div className="rounded-lg border bg-subtle p-3 lg:p-4">
+          <RelationshipPath path={path} account={account} />
+        </div>
         <GraphLegend />
         {evidence.length ? (
           <section aria-labelledby="graph-evidence-title" className="flex flex-col gap-2 [&_a]:text-link [&_a]:underline">
@@ -301,26 +225,13 @@ const nodeStyles = {
   Competitor: { icon: Layers2, color: "text-destructive", surface: "border-destructive/30 bg-danger-bg", legend: "Competition" },
 };
 
+const graphCategories = ["Product", "Company", "Signal", "Person", "Competitor"] as const;
+type GraphCategory = typeof graphCategories[number];
+
 function nodeCategory(label: string): GraphCategory | undefined {
   const normalized = label.toLowerCase();
   if (normalized === "contact" || normalized === "institution") return "Person";
   return graphCategories.find((category) => category.toLowerCase() === normalized);
-}
-
-function filterPath(path: GraphNode[], hidden: Set<GraphCategory>) {
-  function isVisible(node: GraphNode) {
-    const category = nodeCategory(node.label);
-    return !category || !hidden.has(category);
-  }
-
-  return path.flatMap((node, index) => {
-    if (!isVisible(node)) return [];
-    const next = path[index + 1];
-    if (node.relationship && next && !isVisible(next)) {
-      return [{ ...node, relationship: null, evidence_id: null }];
-    }
-    return [node];
-  });
 }
 
 function GraphLegend() {
@@ -389,11 +300,9 @@ function RelationshipPath({ path, account }: { path: GraphNode[]; account?: Acco
   );
 }
 
-function MoreRelationships({ account, hidden }: { account: Account; hidden: Set<GraphCategory> }) {
-  const { signal } = account;
-  const contact = hidden.has("Person") ? null : account.contact;
-  const risk = hidden.has("Signal") ? null : account.negative_signal;
-  const extraSignal = !hidden.has("Signal") && signal && account.graph_path.length > 0
+function MoreRelationships({ account }: { account: Account }) {
+  const { signal, contact, negative_signal: risk } = account;
+  const extraSignal = signal && account.graph_path.length > 0
     && !account.graph_path.some((node) => node.id === signal.id) ? signal : null;
   if (!contact && !risk && !extraSignal) return null;
   const enrichment = enrichmentText(account.enrichment_status, contact?.verification_status);
@@ -409,10 +318,10 @@ function MoreRelationships({ account, hidden }: { account: Account; hidden: Set<
             <AccordionItem value="contact">
               <AccordionTrigger>Contact and employer</AccordionTrigger>
               <AccordionContent className="flex flex-col gap-2">
-                <RelationshipPath path={filterPath([
+                <RelationshipPath path={[
                   { id: contact.id, label: "Person", name: contact.role, relationship: "WORKS_AT", evidence_id: null },
                   { id: account.id, label: "Company", name: account.name, relationship: null, evidence_id: null },
-                ], hidden)} />
+                ]} />
                 <p className={enrichment.tone}>{enrichment.text}</p>
               </AccordionContent>
             </AccordionItem>
@@ -460,14 +369,6 @@ function CompetitorRelationships({ rivals }: { rivals: Competitor[] }) {
       </AccordionItem>
     </Accordion>
   );
-}
-
-function hiddenInsights(hidden: Set<GraphCategory>): GraphInsight["kind"][] {
-  const kinds: GraphInsight["kind"][] = [];
-  if (hidden.has("Person")) kinds.push("employment", "education", "warm_introduction");
-  if (hidden.has("Signal")) kinds.push("buying_evaluation");
-  if (hidden.has("Signal") || hidden.has("Competitor")) kinds.push("renewal", "churn");
-  return kinds;
 }
 
 function RelatedEvidence({ account, id }: { account: Account; id: string | null }) {

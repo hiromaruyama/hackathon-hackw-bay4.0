@@ -17,11 +17,10 @@ const titles: Record<GraphInsight["kind"], string> = {
   churn: "Vendor replacement",
 };
 
-export function GraphInsights({ accountId, hiddenKinds }: { accountId: string; hiddenKinds?: GraphInsight["kind"][] }) {
+export function GraphInsights({ accountId }: { accountId: string }) {
   const [items, setItems] = useState<GraphInsight[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const visibleItems = items?.filter((item) => !hiddenKinds?.includes(item.kind));
 
   async function load() {
     setLoading(true);
@@ -44,8 +43,7 @@ export function GraphInsights({ accountId, hiddenKinds }: { accountId: string; h
       </PanelHeader>
       {error ? <InlineAlert tone="danger" title="Paths couldn't load">{error}</InlineAlert> : null}
       {items?.length === 0 ? <p className="text-sm text-muted-foreground">No sourced paths were found for this account.</p> : null}
-      {items?.length && visibleItems?.length === 0 ? <p className="text-sm text-muted-foreground">No sourced paths match your category filters.</p> : null}
-      {visibleItems?.map((item) => (
+      {items?.map((item) => (
         <div key={`${item.kind}-${item.path.join("/")}`} className="flex min-w-0 flex-col gap-2 border-t pt-3">
           <Badge variant="secondary">{titles[item.kind]}</Badge>
           <p className="break-words text-sm font-medium">{item.path.join(" → ")}</p>
