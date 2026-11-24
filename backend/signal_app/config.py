@@ -45,6 +45,7 @@ class Settings:
     flexprice_external_customer_id: str = ''
     flexprice_wallet_id: str = ''
     flexprice_enrichment_cost: Decimal = Decimal('1')
+    flexprice_meter_graph_and_outreach: bool = False
     nexla_sync_url: str = ''
     nexla_access_token: str = field(default='', repr=False)
 
@@ -95,6 +96,7 @@ class Settings:
             flexprice_api_key=get('FLEXPRICE_API_KEY'), flexprice_customer_id=get('FLEXPRICE_CUSTOMER_ID'),
             flexprice_external_customer_id=get('FLEXPRICE_EXTERNAL_CUSTOMER_ID'),
             flexprice_wallet_id=get('FLEXPRICE_WALLET_ID'), flexprice_enrichment_cost=cost,
+            flexprice_meter_graph_and_outreach=get('FLEXPRICE_METER_GRAPH_AND_OUTREACH', 'false').lower() == 'true',
             nexla_sync_url=get('NEXLA_SYNC_URL'), nexla_access_token=get('NEXLA_ACCESS_TOKEN'),
         )
 

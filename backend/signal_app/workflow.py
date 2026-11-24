@@ -1,12 +1,12 @@
 from collections import Counter
 from threading import Lock
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from .config import EMAIL_PATTERN, Settings
 from .errors import ProviderError, SignalError
 from .models import (
     Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview, DraftRevision, EditDraft, Icp,
-    Lead, Pipeline, PipelineEvent, Product, ProductInput, ReviewDraft, State, Usage, UsageEvent, Workspace,
+    Lead, Pipeline, PipelineEvent, Product, ProductInput, ReviewDraft, State, Usage, UsageEvent, UsageOperation, Workspace,
 )
 from .providers import Delivery, Enriched, Providers, stable_id, utcnow
 from .research import analyze_research, check_copy, focus_research, gather_research, make_profile, write_copy
@@ -307,24 +307,38 @@ class Workflow:
             add_activity(state, 'hunter_enrichment', actor, f'Hunter lookup status: {enriched.status}.', account_id=account.id)
 
         self.store.write(save_contact)
-        if not event:
-            return
-        result = 'failed'
-        if enriched.status != 'failed':
+        if event:
+            self._submit_meter(event, billable=enriched.status != 'failed')
+
+    def _queue_extra_meter(self, state: State, operation: UsageOperation, account_id: str,
+                           key: str, revision: int) -> UsageEvent | None:
+        if not self.settings.flexprice_enabled or not self.settings.flexprice_meter_graph_and_outreach:
+            return None
+        event_id = str(uuid5(NAMESPACE_URL, f'signal:{self.store.workspace_id}:{operation}:{key}:{revision}'))
+        state.usage = state.usage or Usage(enrichment_cost=float(self.settings.flexprice_enrichment_cost))
+        if any(event.id == event_id for event in state.usage.events):
+            return None
+        event = UsageEvent(id=event_id, account_id=account_id, operation=operation, at=utcnow(), status='pending')
+        state.usage.events.append(event)
+        return event
+
+    def _submit_meter(self, event: UsageEvent, *, billable: bool = True) -> None:
+        status = 'failed'
+        if billable:
             try:
                 self.providers.meter(event)
-                result = 'accepted'
+                status = 'accepted'
             except ProviderError:
-                result = 'pending'
+                status = 'pending'
 
         def save_usage(graph: GraphTransaction, state: State) -> None:
             for item in state.usage.events if state.usage else []:
                 if item.id == event.id:
-                    item.status = result
-            if result == 'accepted':
-                add_activity(state, 'flexprice_metered', 'system', 'Flexprice accepted one enrichment usage event.', account_id=account.id)
-            elif result == 'pending':
-                add_activity(state, 'flexprice_meter_pending', 'system', 'The enrichment happened, but meter acceptance is unconfirmed.', account_id=account.id)
+                    item.status = status
+            if status == 'accepted':
+                add_activity(state, 'flexprice_metered', 'system', f'Flexprice accepted the {event.operation} usage event.', account_id=event.account_id)
+            elif status == 'pending':
+                add_activity(state, 'flexprice_meter_pending', 'system', f'Flexprice acceptance is unconfirmed for {event.operation}.', account_id=event.account_id)
 
         self.store.write(save_usage)
 
@@ -348,7 +362,7 @@ class Workflow:
             copy, synthesis_mode = write_copy(self.providers, product, account, evidence_id, role)
             validate_copy(copy.subject, copy.body)
 
-            def save(graph: GraphTransaction, state: State) -> None:
+            def save(graph: GraphTransaction, state: State) -> UsageEvent | None:
                 current = get_account(state, account_id)
                 icp_current(state, account.icp_revision)
                 if current.researched_at != account.researched_at:
@@ -375,8 +389,10 @@ class Workflow:
                     add_activity(state, 'draft_validation_fallback', 'system', 'Copy review rejected an unsupported claim. A draft quoting the graph evidence directly was saved.', account_id=account_id)
                 add_activity(state, 'draft_created', 'system', 'A source-backed draft was saved for human review.',
                              account_id=account_id, draft_id=key, revision=revision)
+                return self._queue_extra_meter(state, 'graph_query_evaluated', account_id, key, revision)
 
-            self.store.write(save)
+            if meter := self.store.write(save):
+                self._submit_meter(meter)
             return self.workspace()
 
     def edit_draft(self, key: str, request: EditDraft, actor: str) -> Workspace:
@@ -458,7 +474,7 @@ class Workflow:
         return self.workspace()
 
     def _finish_send(self, key: str, revision: int, delivery: Delivery) -> None:
-        def finish(graph: GraphTransaction, state: State) -> None:
+        def finish(graph: GraphTransaction, state: State) -> UsageEvent | None:
             draft = graph.draft(key, lock=True)
             if not draft or not draft.dispatch or draft.dispatch.revision != revision or draft.dispatch.status != 'pending_outcome':
                 raise SignalError('dispatch_reservation_missing', 'The reserved attempt could not be reconciled.')
@@ -486,5 +502,8 @@ class Workflow:
                     id=stable_id('pipeline', key, str(revision)), account_id=lead.account_id, draft_id=key,
                     revision=revision, from_stage=stage, to_stage='contacted', actor=attempt.actor, at=attempt.finished_at,
                 ))
+                return self._queue_extra_meter(state, 'outreach_sent', lead.account_id, key, revision)
+            return None
 
-        self.store.write(finish)
+        if event := self.store.write(finish):
+            self._submit_meter(event)

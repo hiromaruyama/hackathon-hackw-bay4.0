@@ -18,6 +18,7 @@ EnrichmentStatus = Literal['not_started', 'verified', 'uncertain', 'not_found', 
 PipelineStage = Literal['matched', 'contacted', 'replied', 'meeting_booked', 'closed_lost']
 SignalKind = Literal['direct', 'indirect', 'weak']
 SynthesisMode = Literal['claude', 'grounded_template']
+UsageOperation = Literal['leads_enriched', 'graph_query_evaluated', 'outreach_sent']
 
 
 class InputModel(BaseModel):
@@ -250,7 +251,7 @@ class Pipeline(BaseModel):
 class UsageEvent(BaseModel):
     id: str
     account_id: str
-    operation: Literal['leads_enriched', 'graph_query_evaluated', 'outreach_sent']
+    operation: UsageOperation
     units: int = 1
     status: Literal['pending', 'accepted', 'blocked', 'failed']
     at: datetime

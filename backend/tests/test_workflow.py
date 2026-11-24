@@ -286,6 +286,22 @@ def test_flexprice_blocks_before_hunter_despite_async_wallet(system):
     assert usage['available_for_enrichment'] == 0
 
 
+@pytest.mark.parametrize('system', [{'flexprice_enabled': True, 'flexprice_meter_graph_and_outreach': True}], indirect=True)
+def test_extended_flexprice_meters_track_one_lead_and_one_confirmed_dispatch(system):
+    client, providers = system
+    account_id, draft = prepare_draft(client)
+    path = f'/api/drafts/{draft["id"]}'
+    assert [event.operation for event in providers.meters] == ['leads_enriched', 'graph_query_evaluated']
+    post(client, path + '/review', {'revision': 1, 'decision': 'approve'})
+    post(client, path + '/send', {'revision': 1})
+    state = post(client, path + '/send', {'revision': 1})
+    events = state['usage']['events']
+    assert [event['operation'] for event in events] == ['leads_enriched', 'graph_query_evaluated', 'outreach_sent']
+    assert all(event['account_id'] == account_id and event['status'] == 'accepted' for event in events)
+    assert len({event.id for event in providers.meters}) == 3
+    assert len(providers.sent) == 1
+
+
 def test_unrelated_citation_is_rejected_and_enrichment_is_retained(system):
     client, providers = system
     providers.invalid_citation = True
