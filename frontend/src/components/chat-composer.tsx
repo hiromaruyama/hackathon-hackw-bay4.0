@@ -15,6 +15,7 @@ type ComposerProps = {
   value: string;
   onChange: Dispatch<SetStateAction<string>>;
   inputRef: RefObject<HTMLTextAreaElement | null>;
+  inputId?: string;
   onSend: (message: string) => void;
   onVoiceLine: (role: "user" | "agent", text: string) => void;
   getContext: () => unknown;
@@ -26,7 +27,7 @@ type ComposerProps = {
   callContext?: string;
 };
 
-export function ChatComposer({ value, onChange, inputRef, onSend, onVoiceLine, getContext, sending,
+export function ChatComposer({ value, onChange, inputRef, inputId, onSend, onVoiceLine, getContext, sending,
   placeholder, label, maxLength, voiceEnabled = true, callContext }: ComposerProps) {
   const { startSession, endSession, sendUserMessage, sendContextualUpdate } = useConversationControls();
   const { status } = useConversationStatus();
@@ -112,7 +113,7 @@ export function ChatComposer({ value, onChange, inputRef, onSend, onVoiceLine, g
       {error ? <InlineAlert tone="danger" title={error.title}>{error.message}</InlineAlert> : null}
       <form className="rounded-2xl border border-input bg-card p-1.5 shadow-sm focus-within:border-ring" onSubmit={send}>
         <Textarea
-          ref={inputRef} value={value} onChange={(event) => onChange(event.target.value)}
+          id={inputId} ref={inputRef} value={value} onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
