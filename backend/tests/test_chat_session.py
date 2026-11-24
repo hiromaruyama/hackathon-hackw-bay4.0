@@ -1,3 +1,5 @@
+from secrets import token_urlsafe
+
 import httpx
 from fastapi.testclient import TestClient
 
@@ -8,7 +10,8 @@ from signal_app.providers import Providers
 
 ORIGIN = 'http://localhost:8000'
 HEADERS = {'Origin': ORIGIN}
-PASSWORD = 'fixture-only-password'
+PASSWORD = token_urlsafe(24)
+API_KEY = token_urlsafe(24)
 SIGNED = 'wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent-test&conversation_signature=sig'
 
 
@@ -18,8 +21,8 @@ class NoStore:
 
 
 def settings(**overrides):
-    values = dict(public_origin=ORIGIN, demo_password=PASSWORD, session_secret='s' * 40,
-                  elevenlabs_api_key='fixture-key', elevenlabs_agent_id='agent-test')
+    values = dict(public_origin=ORIGIN, demo_password=PASSWORD, session_secret=token_urlsafe(32),
+                  elevenlabs_api_key=API_KEY, elevenlabs_agent_id='agent-test')
     values.update(overrides)
     return Settings(**values)
 
@@ -63,7 +66,7 @@ def test_signed_url_uses_server_key_and_agent():
     (call,) = calls
     assert call.url.path == '/v1/convai/conversation/get-signed-url'
     assert call.url.params['agent_id'] == 'agent-test'
-    assert call.headers['xi-api-key'] == 'fixture-key'
+    assert call.headers['xi-api-key'] == API_KEY
 
 
 def test_unconfigured_and_provider_failures_do_not_leak_details():
@@ -72,10 +75,10 @@ def test_unconfigured_and_provider_failures_do_not_leak_details():
     assert response.status_code == 503 and response.json()['error']['code'] == 'chat_unconfigured'
     assert calls == []
 
-    test_client, _ = client(lambda _r: httpx.Response(401, json={'detail': 'bad key fixture-key'}))
+    test_client, _ = client(lambda _r: httpx.Response(401, json={'detail': f'bad key {API_KEY}'}))
     response = signed_in(test_client).post('/api/chat/session', json={}, headers=HEADERS)
     assert response.status_code == 502
-    assert 'fixture-key' not in response.text
+    assert API_KEY not in response.text
 
     test_client, _ = client(lambda _r: httpx.Response(200, json={'signed_url': 'http://not-a-websocket'}))
     assert signed_in(test_client).post('/api/chat/session', json={}, headers=HEADERS).status_code == 502

@@ -1,8 +1,10 @@
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from secrets import token_urlsafe
 from threading import Event
 from uuid import uuid4
 
@@ -21,7 +23,7 @@ from signal_app.workflow import Workflow
 
 ORIGIN = 'http://localhost:8000'
 HEADERS = {'Origin': ORIGIN}
-PASSWORD = 'fixture-only-password'
+PASSWORD = token_urlsafe(24)
 FIELDS = {
     'industries': ['Renewable energy project development'], 'geography': ['United States'],
     'headcount_band': '50–500', 'revenue_band': None, 'buyer_titles': ['Director of Project Development'],
@@ -217,9 +219,9 @@ def system(request):
         pytest.skip('Set SIGNAL_TEST_NEO4J_URI to a disposable Neo4j instance for integration tests.')
     params = getattr(request, 'param', {})
     settings = Settings(
-        public_origin=ORIGIN, demo_password=PASSWORD, session_secret='test-secret-only-' * 4,
+        public_origin=ORIGIN, demo_password=PASSWORD, session_secret=token_urlsafe(32),
         neo4j_uri=uri, neo4j_password=os.getenv('SIGNAL_TEST_NEO4J_PASSWORD', ''),
-        gmail_client_id='simulated', gmail_client_secret='simulated', gmail_refresh_token='simulated',
+        gmail_client_id='simulated', gmail_client_secret=token_urlsafe(24), gmail_refresh_token=token_urlsafe(24),
         gmail_sender='owner@example.com', test_recipient='demo@example.com', **params,
     )
     store = Neo4jStore(settings, workspace_id=f'test-{uuid4()}')
@@ -313,6 +315,58 @@ def test_gmail_feedback_and_rep_moves_preserve_attribution(system):
     assert result['events'][-1]['outcome'] == 'won'
     assert result['analytics']['industry'][0]['reached']['contacted'] == 1
     assert result['analytics']['tier'][0]['reached']['meeting_booked'] == 1
+    assert len(providers.sent) == 1
+
+
+@pytest.mark.parametrize('system', [{'gmail_feedback_refresh_token': 'simulated-read-token'}], indirect=True)
+def test_gmail_watch_reconciles_and_deduplicates_feedback(system):
+    client, providers = system
+    settings = replace(client.app.state.settings, gmail_pubsub_topic='projects/signal-project/topics/feedback',
+                       gmail_pubsub_subscription='projects/signal-project/subscriptions/feedback',
+                       gmail_pubsub_service_account='push@signal-project.iam.gserviceaccount.com')
+    workflow = Workflow(settings, providers.store, providers)
+    account_id, draft = prepare_draft(client)
+    route = f'/api/drafts/{draft["id"]}'
+    post(client, route + '/review', {'revision': 1, 'decision': 'approve'})
+    post(client, route + '/send', {'revision': 1})
+
+    watch_calls, history_calls = [], []
+    now = datetime.now(timezone.utc)
+    def register():
+        watch_calls.append(1)
+        return 100 if len(watch_calls) == 1 else 106, now + timedelta(days=7)
+    providers.gmail_watch = register
+    def history(cursor):
+        history_calls.append(cursor)
+        return 105 if len(watch_calls) == 1 else 106, True
+    providers.gmail_history_checkpoint = history
+
+    workflow.reconcile_gmail_watch()
+    assert workflow.gmail_watch_status() == (True, None)
+    workflow.process_gmail_notification(100)
+    active, first_push_at = workflow.gmail_watch_status()
+    assert active and first_push_at
+    assert history_calls == []
+    providers.feedback['gmail-test-1'] = [GmailFeedback('reply-1', 'reply'), GmailFeedback('bounce-1', 'bounce')]
+    workflow.process_gmail_notification(105)
+    workflow.process_gmail_notification(102)
+    workflow.process_gmail_notification(105)
+    pipeline = workflow.workspace().pipeline
+    assert pipeline.counts['replied'] == 1
+    assert [(e.action, e.source, e.account_id) for e in pipeline.events][-2:] == [
+        ('reply', 'gmail', account_id), ('bounce', 'gmail', account_id),
+    ]
+    assert history_calls == [100]
+
+    def renewal_due(_, state):
+        state.gmail_watch.renewed_at = now - timedelta(days=2)
+    providers.store.write(renewal_due)
+    workflow.reconcile_gmail_watch()
+    assert len(watch_calls) == 2
+    assert history_calls == [100, 105]
+    assert providers.store.read(lambda _, state: state.gmail_watch.history_id) == 106
+    assert workflow.gmail_watch_status()[1] >= first_push_at
+    assert workflow.workspace().pipeline.events == pipeline.events
     assert len(providers.sent) == 1
 
 

@@ -1,5 +1,5 @@
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from threading import Lock
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -7,12 +7,12 @@ from .classification import validate_codes
 from .config import EMAIL_PATTERN, Settings
 from .errors import ProviderError, SignalError
 from .models import (
-    Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview, DraftRevision, EditDraft, GraphInsight, Icp,
+    Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview, DraftRevision, EditDraft, GmailWatch, GraphInsight, Icp,
     Lead, Pipeline, PipelineChange, PipelineEvent, Product, ProductInput, ResearchSchedule, ReviewDraft, ScheduleDraft, State,
     Usage, UsageEvent, UsageOperation, Workspace,
 )
 from .pipeline import PIPELINE_STAGES, funnel_analytics
-from .providers import Delivery, Enriched, Providers, clean_text, stable_id, utcnow
+from .providers import Delivery, Enriched, GmailFeedback, Providers, clean_text, stable_id, utcnow
 from .research import analyze_research, check_copy, draft_followups, focus_research, gather_research, make_profile, write_copy
 from .store import GraphTransaction, Neo4jStore
 
@@ -347,48 +347,128 @@ class Workflow:
         graph.record_pipeline_event(event, prior_send)
         state.pipeline_events.append(event)
 
-    def sync_gmail_feedback(self) -> Workspace:
-        if not self.settings.gmail_feedback_configured:
-            raise ProviderError('Gmail', 'requires the controlled mailbox metadata refresh token.', 503)
-
+    def _gmail_feedback_snapshot(self) -> tuple[dict[str, PipelineEvent], dict[str, list[GmailFeedback]]]:
         def read_sends(graph: GraphTransaction, state: State) -> dict[str, PipelineEvent]:
             result = {}
             for event in reversed(state.pipeline_events):
                 if event.action != 'send' or not event.draft_id:
                     continue
                 draft = graph.draft(event.draft_id)
-                if draft and draft.dispatch and draft.dispatch.provider_message_id and draft.current.test_recipient == self.settings.test_recipient:
+                if (draft and draft.dispatch and draft.dispatch.provider_message_id
+                        and draft.current.channel == 'email' and draft.current.test_recipient == self.settings.test_recipient):
                     result[draft.dispatch.provider_message_id] = event
                 if len(result) == 8:
                     break
             return result
 
+        sends = self.store.read(read_sends)
+        return sends, self.providers.gmail_feedback(list(sends)) if sends else {}
+
+    def _save_gmail_feedback(self, graph: GraphTransaction, state: State, sends: dict[str, PipelineEvent],
+                             feedback: dict[str, list[GmailFeedback]]) -> None:
+        recorded = {event.id for event in state.pipeline_events}
+        for message_id, items in feedback.items():
+            send = sends.get(message_id)
+            if not send or not (lead := state.leads.get(send.account_id)):
+                continue
+            for item in items:
+                key = stable_id('feedback', item.id)
+                if key in recorded:
+                    continue
+                to_stage = 'replied' if item.kind == 'reply' and lead.stage == 'contacted' else lead.stage
+                event = PipelineEvent(id=key, account_id=lead.account_id, draft_id=send.draft_id,
+                                      revision=send.revision, from_stage=lead.stage, to_stage=to_stage,
+                                      actor='system', at=utcnow(), test_send=False, action=item.kind, source='gmail')
+                self._record_pipeline(graph, state, lead, event, prior_send=send.id)
+                recorded.add(key)
+
+    def sync_gmail_feedback(self) -> Workspace:
+        if not self.settings.gmail_feedback_configured:
+            raise ProviderError('Gmail', 'requires the controlled mailbox metadata refresh token.', 503)
         with self._feedback_lock:
-            sends = self.store.read(read_sends)
-            if not sends:
-                return self.workspace()
-            feedback = self.providers.gmail_feedback(list(sends))
-
-            def save(graph: GraphTransaction, state: State) -> None:
-                recorded = {event.id for event in state.pipeline_events}
-                for message_id, items in feedback.items():
-                    send = sends.get(message_id)
-                    if not send or not (lead := state.leads.get(send.account_id)):
-                        continue
-                    for item in items:
-                        key = stable_id('feedback', item.id)
-                        if key in recorded:
-                            continue
-                        to_stage = 'replied' if item.kind == 'reply' and lead.stage == 'contacted' else lead.stage
-                        event = PipelineEvent(id=key, account_id=lead.account_id, draft_id=send.draft_id,
-                                              revision=send.revision, from_stage=lead.stage, to_stage=to_stage,
-                                              actor='system', at=utcnow(), test_send=False, action=item.kind, source='gmail')
-                        self._record_pipeline(graph, state, lead, event, prior_send=send.id)
-                        recorded.add(key)
-
+            sends, feedback = self._gmail_feedback_snapshot()
             if feedback:
-                self.store.write(save)
+                self.store.write(lambda graph, state: self._save_gmail_feedback(graph, state, sends, feedback))
         return self.workspace()
+
+    def _gmail_watch_binding(self) -> str:
+        return stable_id('gmail-watch', self.settings.gmail_pubsub_topic, self.settings.gmail_pubsub_subscription,
+                         self.settings.gmail_pubsub_service_account or '', self.settings.gmail_sender or '',
+                         self.settings.test_recipient or '')
+
+    def gmail_watch_status(self) -> tuple[bool, datetime | None]:
+        if not self.settings.gmail_push_configured:
+            return False, None
+        binding = self._gmail_watch_binding()
+        watch = self.store.read(lambda _, state: state.gmail_watch)
+        if not watch or watch.binding != binding:
+            return False, None
+        return watch.expires_at > utcnow(), watch.last_push_at
+
+    def reconcile_gmail_watch(self) -> None:
+        binding = self._gmail_watch_binding()
+        with self._feedback_lock:
+            watch = self.store.read(lambda _, state: state.gmail_watch)
+            now = utcnow()
+            initial = not watch or watch.binding != binding
+            if initial or watch.renewed_at + timedelta(days=1) <= now or watch.expires_at <= now + timedelta(minutes=15):
+                history_id, expires_at = self.providers.gmail_watch()
+                sends, feedback = self._gmail_feedback_snapshot() if initial else ({}, {})
+
+                def renew(graph: GraphTransaction, state: State) -> None:
+                    current = state.gmail_watch
+                    if current and current.binding == binding and current.renewed_at >= now:
+                        return
+                    self._save_gmail_feedback(graph, state, sends, feedback)
+                    if current and current.binding == binding:
+                        current.expires_at = expires_at
+                        current.renewed_at = now
+                    else:
+                        state.gmail_watch = GmailWatch(binding=binding, history_id=history_id,
+                                                       expires_at=expires_at, renewed_at=now)
+
+                self.store.write(renew)
+                if initial:
+                    return
+            self._sync_gmail_history(binding)
+
+    def process_gmail_notification(self, history_id: int) -> None:
+        with self._feedback_lock:
+            self._sync_gmail_history(self._gmail_watch_binding(), history_id)
+
+    def _sync_gmail_history(self, binding: str, notification_id: int = 0) -> None:
+        watch = self.store.read(lambda _, state: state.gmail_watch)
+        if not watch or watch.binding != binding:
+            raise SignalError('gmail_watch_starting', 'The controlled Gmail watch is starting. Retry shortly.', 503)
+        pushed_at = utcnow() if notification_id else None
+        if notification_id and notification_id <= watch.history_id:
+            if not watch.last_push_at:
+                # The initial watch notification can carry the cursor we just saved.
+                def acknowledge(_, state: State) -> None:
+                    current = state.gmail_watch
+                    if current and current.binding == binding and not current.last_push_at:
+                        current.last_push_at = pushed_at
+                self.store.write(acknowledge)
+            return
+
+        history_id, changed = self.providers.gmail_history_checkpoint(watch.history_id)
+        if history_id < notification_id or history_id < watch.history_id:
+            raise SignalError('gmail_history_pending', 'Gmail history is still updating. Retry shortly.', 503)
+        if history_id == watch.history_id:
+            return
+        sends, feedback = self._gmail_feedback_snapshot() if changed else ({}, {})
+
+        def save(graph: GraphTransaction, state: State) -> None:
+            current = state.gmail_watch
+            if not current or current.binding != binding:
+                raise SignalError('gmail_watch_starting', 'The controlled Gmail watch is starting. Retry shortly.', 503)
+            if current.history_id < history_id:
+                self._save_gmail_feedback(graph, state, sends, feedback)
+                current.history_id = history_id
+            if pushed_at and (not current.last_push_at or pushed_at > current.last_push_at):
+                current.last_push_at = pushed_at
+
+        self.store.write(save)
 
     def _draft_inputs(self, graph: GraphTransaction, state: State, account_id: str):
         account = get_account(state, account_id)

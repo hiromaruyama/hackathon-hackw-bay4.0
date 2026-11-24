@@ -461,7 +461,16 @@ class Draft(BaseModel):
         )
 
 
+class GmailWatch(BaseModel):
+    binding: str
+    history_id: int
+    expires_at: AwareDatetime
+    renewed_at: AwareDatetime
+    last_push_at: AwareDatetime | None = None
+
+
 class State(BaseModel):
+    gmail_watch: GmailWatch | None = None
     product: Product | None = None
     icp_versions: list[Icp] = Field(default_factory=list)
     approved_icp_revision: int | None = None

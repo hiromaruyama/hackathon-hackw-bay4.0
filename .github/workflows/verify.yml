@@ -69,22 +69,49 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: python -m pip install -r backend/requirements.txt
-      - name: Snyk SCA and SAST
+      - name: Check Snyk configuration
+        id: snyk_config
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
           SNYK_ORG: ${{ vars.SNYK_ORG }}
         run: |
-          if [[ -z "$SNYK_TOKEN" ]]; then
-            printf '::warning::Set the SNYK_TOKEN repository secret to run Snyk SCA and SAST.\n'
+          if [[ -z "$SNYK_TOKEN" || -z "$SNYK_ORG" ]]; then
+            printf '::warning::Snyk did not run. Configure the SNYK_TOKEN repository secret and SNYK_ORG variable.\n'
+            printf 'Snyk did not run because the repository scanner credential or organization is missing.\n' >> "$GITHUB_STEP_SUMMARY"
+            if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+              exit 1
+            fi
             exit 0
           fi
-          snyk_org=()
-          if [[ -n "$SNYK_ORG" ]]; then
-            snyk_org=("--org=$SNYK_ORG")
+          if [[ "$SNYK_TOKEN" =~ [[:space:]] ]]; then
+            printf '::error::SNYK_TOKEN must contain only the raw scanner token on one line.\n'
+            exit 1
           fi
-          snyk_result=0
-          (cd backend && npx --yes snyk@1.1309.0 test --file=requirements.txt --command=python "${snyk_org[@]}") || snyk_result=1
-          (cd frontend && npx --yes snyk@1.1309.0 test --file=package-lock.json "${snyk_org[@]}") || snyk_result=1
-          npx --yes snyk@1.1309.0 code test "${snyk_org[@]}" || snyk_result=1
-          exit "$snyk_result"
+          echo 'configured=true' >> "$GITHUB_OUTPUT"
+
+      - name: Install backend dependencies
+        if: steps.snyk_config.outputs.configured == 'true'
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Snyk Open Source (backend)
+        if: steps.snyk_config.outputs.configured == 'true'
+        working-directory: backend
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG: ${{ vars.SNYK_ORG }}
+        run: npx --yes snyk@1.1309.0 test --file=requirements.txt --command=python --org="$SNYK_ORG"
+
+      - name: Snyk Open Source (frontend)
+        if: "!cancelled() && steps.snyk_config.outputs.configured == 'true'"
+        working-directory: frontend
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG: ${{ vars.SNYK_ORG }}
+        run: npx --yes snyk@1.1309.0 test --file=package-lock.json --org="$SNYK_ORG"
+
+      - name: Snyk Code
+        if: "!cancelled() && steps.snyk_config.outputs.configured == 'true'"
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG: ${{ vars.SNYK_ORG }}
+        run: npx --yes snyk@1.1309.0 code test --org="$SNYK_ORG"

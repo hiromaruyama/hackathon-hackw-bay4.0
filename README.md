@@ -33,3 +33,10 @@ Open [Signal on localhost](http://localhost:8000) and sign in. On the Profile pa
 Set Render secrets through the service's environment settings. The Blueprint uses free Docker compute, the `/api/health` endpoint, and a daily research interval. Set `SIGNAL_RENDER_URL` as a GitHub Actions repository variable to wake a sleeping free service for its scheduled research. Give judges the demo password privately.
 
 The expanded workflow was browser-tested against FastAPI and Neo4j with simulated provider responses. Separate live tests confirmed cited discovery and enrichment, one approved Gmail message in the controlled inbox, Gmail metadata access, Nexla citations, and all three Flexprice Sandbox meters. LinkedIn uses an approved manual handoff to a configured test profile while messaging access is pending. [Release checks](https://github.com/hiromaruyama/hackathon-hackw-bay4.0/actions/runs/45485778785)
+
+
+### Snyk CI
+
+Enable Snyk Code in the scanner organization and set `SNYK_ORG` to its ID or slug under the repository's **Settings → Secrets and variables → Actions → Variables**. Save the organization's CI scanner credential as the `SNYK_TOKEN` Actions repository secret. [Snyk CLI authentication](https://docs.snyk.io/developer-tools/snyk-cli/authenticate-to-use-the-cli) · [GitHub Actions secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+
+Run **Verify Signal** from the Actions tab. Its Snyk job reports backend and frontend dependency scans and Snyk Code in separate steps. Finding-related scan failures remain visible in the check results.

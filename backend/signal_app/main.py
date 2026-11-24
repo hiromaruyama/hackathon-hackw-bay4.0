@@ -11,12 +11,14 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import SecretStr
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
-from .config import Settings
+from .config import GMAIL_PUSH_PATH, Settings
 from .errors import SignalError
+from .gmail_push import GmailPushAuthenticator, gmail_notification
 from .models import (
     ApproveIcp, DiscoverInput, EditDraft, GraphInsight, InputModel, IntakeChat, IntakeReply, PipelineChange, ProductInput,
     ReviewDraft, RevisionInput, ScheduleDraft, Workspace,
@@ -73,6 +75,7 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     providers = providers or Providers(settings)
     workflow = Workflow(settings, store, providers)
     chat_limit = ChatRateLimit()
+    gmail_push = GmailPushAuthenticator(settings, providers.http) if settings.gmail_push_configured else None
 
     async def refresh_public_signals(stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -85,16 +88,32 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
             except TimeoutError:
                 pass
 
+    async def reconcile_gmail(stop: asyncio.Event) -> None:
+        while not stop.is_set():
+            try:
+                await asyncio.to_thread(workflow.reconcile_gmail_watch)
+                delay = 15 * 60
+            except SignalError as error:
+                logging.getLogger(__name__).warning('Scheduled Gmail reconciliation returned %s', error.code)
+                delay = 60
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=delay)
+            except TimeoutError:
+                pass
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         stop = asyncio.Event()
         refresh = asyncio.create_task(refresh_public_signals(stop)) if settings.research_refresh_minutes else None
+        gmail = asyncio.create_task(reconcile_gmail(stop)) if gmail_push else None
         try:
             yield
         finally:
             stop.set()
             if refresh:
                 await refresh
+            if gmail:
+                await gmail
             providers.close()
             store.close()
 
@@ -108,7 +127,9 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
         is_api = request.url.path.startswith('/api/')
-        if is_api and request.method in ('POST', 'PATCH', 'PUT', 'DELETE') and request.headers.get('origin') != settings.public_origin:
+        is_authenticated_push_route = request.method == 'POST' and request.url.path == GMAIL_PUSH_PATH
+        if (is_api and request.method in ('POST', 'PATCH', 'PUT', 'DELETE') and not is_authenticated_push_route
+                and request.headers.get('origin') != settings.public_origin):
             response = error_response('origin_rejected', 'Use the configured demo origin for writes.', 403)
         else:
             response = await call_next(request)
@@ -158,11 +179,14 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
 
     @app.get('/api/readiness')
     def readiness(actor: Actor):
+        gmail_watch_active, gmail_last_push_at = workflow.gmail_watch_status()
         return {
             'claude_configured': bool(settings.anthropic_api_key), 'tavily_configured': bool(settings.tavily_api_key),
             'hunter_configured': bool(settings.hunter_api_key), 'neo4j_configured': bool(settings.neo4j_uri),
             'neo4j_reachable': store.check(), 'gmail_configured': settings.gmail_configured,
             'gmail_feedback_configured': settings.gmail_feedback_configured,
+            'gmail_push_configured': settings.gmail_push_configured, 'gmail_watch_active': gmail_watch_active,
+            'gmail_last_push_at': gmail_last_push_at,
             'flexprice_enabled': settings.flexprice_enabled, 'flexprice_configured': settings.flexprice_configured,
             'nexla_configured': bool(settings.nexla_sync_url and settings.nexla_access_token),
             'chat_configured': settings.chat_configured,
@@ -234,6 +258,15 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
     @app.post('/api/feedback/gmail/sync')
     def gmail_feedback(actor: Actor) -> Workspace:
         return workflow.sync_gmail_feedback()
+
+    @app.post(GMAIL_PUSH_PATH, status_code=204, include_in_schema=False)
+    async def gmail_webhook(request: Request) -> Response:
+        if not gmail_push:
+            raise SignalError('gmail_push_unconfigured', 'Configure Gmail Pub/Sub push to receive notifications.', 503)
+        await run_in_threadpool(gmail_push.authorize, request.headers.get('authorization', ''))
+        history_id = await gmail_notification(request, settings)
+        await run_in_threadpool(workflow.process_gmail_notification, history_id)
+        return Response(status_code=204)
 
     if settings.static_dir.is_dir():
         app.mount('/', StaticFiles(directory=settings.static_dir, html=True), name='workspace-ui')

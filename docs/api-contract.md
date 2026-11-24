@@ -12,7 +12,7 @@ All workspace and readiness routes require a demo session. Sign in with `POST /a
 | `POST /api/session` | `{"password":"…"}` | `{"actor":"demo"}` and a session cookie |
 | `GET /api/session` | — | `{"actor":"demo"}` |
 | `DELETE /api/session` | — | `204` and an expired cookie |
-| `GET /api/readiness` | — | Per-provider configuration flags and connectivity status for Neo4j |
+| `GET /api/readiness` | — | Per-provider configuration, Gmail watch activity, and Neo4j connectivity |
 | `GET /api/workspace` | — | `Workspace` |
 | `POST /api/intake/chat` | `{"product":{},"history":[],"message":"We sell site analysis to U.S. solar developers."}` | A short `reply` and a `proposal` of editable product form values. |
 | `POST /api/icp/generate` | `{"description":"…","name":"GeoFlow","capabilities":[],"constraints":[],"customers_and_wins":[],"pricing":null,"contract_value":null}` | Workspace with a proposed ICP |
@@ -28,7 +28,10 @@ All workspace and readiness routes require a demo session. Sign in with `POST /a
 | `POST /api/drafts/{id}/schedule` | `{"revision":2,"scheduled_at":"2026-12-01T20:00:00Z"}` or `null` to clear | Workspace with an earliest action time on an approved follow-up. |
 | `POST /api/drafts/{id}/linkedin-handoff` | `{"revision":1}` | Workspace with a recorded handoff to the controlled LinkedIn profile after approval and prior touches. |
 | `POST /api/feedback/gmail/sync` | — | Workspace with deduplicated reply and bounce events matched to the controlled test message. |
+| `POST /api/webhooks/gmail` | Wrapped Gmail push notification from the configured Pub/Sub subscription with an audience-bound Google bearer token. | `204` after the notification is processed or a duplicate is recognized. |
 | `POST /api/pipeline/{id}/stage` | `{"expected_stage":"replied","to_stage":"meeting_booked","note":"Demo booked"}` | Workspace with the rep's attributed stage event. Closing requires a `won` or `lost` outcome. |
+
+The Gmail webhook authenticates with Google Pub/Sub identity. Browser session writes, including Gmail dispatch, require the configured origin and retain their existing authorizations.
 
 Fields that may be absent are documented as `null` in the example. Scores are integers from 0–100. Confidence is a 0–1 heuristic. Each account's `recommendation` is `contact`, `hold`, or `reject` and `tier` is `A`, `B`, or `C`. `graph_path` is a list of nodes and outgoing relationship names. `enrichment_status` is `not_started`, `verified`, `uncertain`, `not_found`, or `failed`. `draft` belongs to an account and includes the actual demo recipient. `synthesis_mode` is `claude` or `grounded_template` if copy review replaced a factual claim with a literal excerpt. `review_status` is `pending_review`, `approved`, or `rejected`. `dispatch_status` is `not_sent`, `pending_outcome`, `sent`, or `failed`. Only `sent` yields a pipeline event. `matched_to_contacted_rate` is a fraction or `null` when no eligible accounts were evaluated.
 

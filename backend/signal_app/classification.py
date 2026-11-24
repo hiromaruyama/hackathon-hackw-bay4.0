@@ -6,10 +6,16 @@ from .errors import SignalError
 from .models import IndustryCode
 
 
+CATALOG_DIRECTORY = Path(__file__).with_name('data')
+
+
 @lru_cache(maxsize=2)
 def catalog(system: str) -> dict[str, str]:
-    filename = {'NAICS': 'naics-2022.json', 'SIC': 'sic-edgar.json'}[system]
-    return json.loads((Path(__file__).with_name('data') / filename).read_text())
+    if system == 'NAICS':
+        return json.loads((CATALOG_DIRECTORY / 'naics-2022.json').read_text())
+    if system == 'SIC':
+        return json.loads((CATALOG_DIRECTORY / 'sic-edgar.json').read_text())
+    raise KeyError(system)
 
 
 def validate_codes(codes: list[IndustryCode], *, strict: bool = False) -> list[IndustryCode]:

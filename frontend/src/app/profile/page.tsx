@@ -73,6 +73,19 @@ function fromDraft(d: FieldDraft): IcpFields {
   };
 }
 
+function publicEvidenceLink(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) {
+      return url.href;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function Profile() {
   const { workspace, generateIcp, approveIcp, pending } = useWorkspace();
   const w = workspace!;
@@ -92,6 +105,7 @@ function Profile() {
   const [intakeTab, setIntakeTab] = useState("form");
 
   const icp = w.icp;
+  const expansionEvidenceLink = publicEvidenceLink(icp?.expansion?.evidence.url);
   const [fields, setFields] = useState<FieldDraft | null>(icp ? toDraft(icp.fields) : null);
   const [decision, setDecision] = useState<ExpansionDecision>(icp?.expansion_decision ?? "dismiss");
   const [segment, setSegment] = useState(icp?.expansion?.segment ?? "");
@@ -289,9 +303,13 @@ function Profile() {
                       <span className="font-semibold">{icp.expansion.segment}</span>
                       <span className="text-muted-foreground"> {icp.expansion.reason}</span>
                     </p>
-                    <a className="text-sm" href={icp.expansion.evidence.url} target="_blank" rel="noreferrer noopener">
-                      {icp.expansion.evidence.title}
-                    </a>
+                    {expansionEvidenceLink ? (
+                      <a className="text-sm" href={expansionEvidenceLink} target="_blank" rel="noreferrer noopener">
+                        {icp.expansion.evidence.title}
+                      </a>
+                    ) : (
+                      <span className="text-sm">{icp.expansion.evidence.title}</span>
+                    )}
                     <div role="radiogroup" aria-label="Adjacent segment decision" className="flex flex-wrap gap-2">
                       {(["accept", "edit", "dismiss"] as const).map((d) => (
                         <Button key={d} type="button" role="radio" aria-checked={decision === d} variant={decision === d ? "default" : "outline"} size="sm" onClick={() => setDecision(d)}>

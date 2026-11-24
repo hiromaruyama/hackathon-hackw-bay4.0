@@ -56,6 +56,8 @@ The intake and research models receive scoped text and typed schemas. Their outp
 
 The Gmail feedback route reads metadata for recorded test messages with a separate `gmail.metadata` token. It verifies that a reply or bounce references the exact outbound message and corresponds to the test recipient. It stores a stable event ID for deduplication. The pipeline attributes provider feedback to Gmail and later stage changes to the signed-in rep. Authored notes are redacted before storage.
 
+Authenticated Google Pub/Sub push uses the same Gmail feedback matcher. Google-signed JWTs must match the endpoint audience and dedicated push service account. Signal also checks the subscription and controlled sender mailbox in each request. An inbox watch uses the separate metadata OAuth grant and renews daily. Neo4j saves the last acknowledged history checkpoint with any new feedback events in one transaction. Replays acknowledge without recording a duplicate, and the scheduled history check catches missed notifications. [Gmail push setup](../backend/README.md#gmail-feedback-push)
+
 Counts and conversion denominators use the stages a lead actually reached. Analytics can group by industry, tier, assigned message variant, delivery channel, and stated value proposition. The initial email variant is chosen deterministically per account and stored with the specific approved and sent revision. Demo test sends appear as test activity.
 
 Flexprice receives stable IDs for `leads_enriched`, `graph_query_evaluated`, and `outreach_sent`. Each includes the lead's account ID for cost allocation. The UI shows recent meter outcomes, wallet balance, reserved allowance, and blocked enrichments.

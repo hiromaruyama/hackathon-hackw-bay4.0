@@ -20,6 +20,8 @@ from .models import Contact, DraftRevision, EnrichmentStatus, Source, UsageEvent
 
 
 MODEL = 'claude-haiku-5-5'
+GMAIL_MAILBOX = 'https://gmail.googleapis.com/gmail/v1/users/me'
+GMAIL_METADATA_SCOPE = 'https://www.googleapis.com/auth/gmail.metadata'
 Result = TypeVar('Result', bound=BaseModel)
 DOMAIN_PATTERN = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
 
@@ -27,6 +29,14 @@ DOMAIN_PATTERN = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2
 def stable_id(prefix: str, *parts: str) -> str:
     digest = sha256('\x00'.join(parts).encode()).hexdigest()[:24]
     return f'{prefix}-{digest}'
+
+
+def gmail_history_id(value: object) -> int:
+    if type(value) is int:
+        value = str(value)
+    if not isinstance(value, str) or not re.fullmatch(r'[1-9][0-9]{0,19}', value):
+        raise ValueError('Invalid Gmail history ID.')
+    return int(value)
 
 
 def utcnow() -> datetime:
@@ -132,9 +142,11 @@ class Providers:
         if self.claude:
             self.claude.close()
 
-    def _json(self, provider: str, method: str, url: str, **kwargs):
+    def _json(self, provider: str, method: str, url: str, *, allow_not_found: bool = False, **kwargs):
         try:
             response = self.http.request(method, url, **kwargs)
+            if allow_not_found and response.status_code == 404:
+                return None
             response.raise_for_status()
             return response.json()
         except httpx.TimeoutException:
@@ -286,7 +298,7 @@ class Providers:
             raise ProviderError('Gmail', 'OAuth settings or the controlled test recipient are missing.', 503)
         return self._gmail_token(self.settings.gmail_refresh_token)
 
-    def _gmail_token(self, refresh_token: str) -> str:
+    def _gmail_token(self, refresh_token: str, *, metadata_only: bool = False) -> str:
         payload = self._json(
             'Gmail', 'POST', 'https://oauth2.googleapis.com/token',
             data={'client_id': self.settings.gmail_client_id, 'client_secret': self.settings.gmail_client_secret,
@@ -295,14 +307,52 @@ class Providers:
         token = payload.get('access_token') if isinstance(payload, dict) else None
         if not isinstance(token, str) or not token:
             raise ProviderError('Gmail', 'did not issue an access token.')
+        if metadata_only:
+            scopes = payload.get('scope')
+            if not isinstance(scopes, str) or set(scopes.split()) != {GMAIL_METADATA_SCOPE}:
+                raise ProviderError('Gmail', 'feedback requires a token with only the gmail.metadata scope.', 503)
         return token
 
-    def gmail_feedback(self, message_ids: list[str]) -> dict[str, list[GmailFeedback]]:
+    def _gmail_metadata_mailbox(self) -> tuple[dict[str, str], dict]:
         if not self.settings.gmail_feedback_configured:
             raise ProviderError('Gmail', 'requires the controlled mailbox metadata refresh token.', 503)
-        token = self._gmail_token(self.settings.gmail_feedback_refresh_token)
+        token = self._gmail_token(self.settings.gmail_feedback_refresh_token, metadata_only=True)
         headers = {'Authorization': f'Bearer {token}'}
-        base = 'https://gmail.googleapis.com/gmail/v1/users/me'
+        profile = self._json('Gmail', 'GET', GMAIL_MAILBOX + '/profile', headers=headers)
+        address = profile.get('emailAddress') if isinstance(profile, dict) else None
+        if not isinstance(address, str) or mailbox(address) != self.settings.gmail_sender:
+            raise ProviderError('Gmail', 'metadata authorization does not match the controlled sender mailbox.', 503)
+        return headers, profile
+
+    def gmail_watch(self) -> tuple[int, datetime]:
+        headers, _ = self._gmail_metadata_mailbox()
+        watch = self._json('Gmail', 'POST', GMAIL_MAILBOX + '/watch', headers=headers, json={
+            'topicName': self.settings.gmail_pubsub_topic, 'labelIds': ['INBOX'], 'labelFilterBehavior': 'include',
+        })
+        try:
+            history_id = gmail_history_id(watch['historyId'])
+            expires_at = datetime.fromtimestamp(int(watch['expiration']) / 1000, timezone.utc)
+        except (KeyError, TypeError, ValueError, OverflowError, OSError):
+            raise ProviderError('Gmail', 'returned invalid watch metadata.') from None
+        if expires_at <= utcnow():
+            raise ProviderError('Gmail', 'returned an expired watch.')
+        return history_id, expires_at
+
+    def gmail_history_checkpoint(self, history_id: int) -> tuple[int, bool]:
+        headers, profile = self._gmail_metadata_mailbox()
+        history = self._json('Gmail', 'GET', GMAIL_MAILBOX + '/history', headers=headers, allow_not_found=True,
+                             params={'startHistoryId': str(history_id), 'labelId': 'INBOX',
+                                     'maxResults': '1'})
+        try:
+            if history is None:
+                # Gmail expired the cursor. Rescan only known sent threads before adopting the new baseline.
+                return gmail_history_id(profile['historyId']), True
+            return gmail_history_id(history['historyId']), bool(history.get('history') or history.get('nextPageToken'))
+        except (KeyError, TypeError, ValueError):
+            raise ProviderError('Gmail', 'returned invalid history metadata.') from None
+
+    def gmail_feedback(self, message_ids: list[str]) -> dict[str, list[GmailFeedback]]:
+        headers, _ = self._gmail_metadata_mailbox()
         metadata = [('format', 'metadata')] + [('metadataHeaders', name) for name in (
             'From', 'To', 'Message-ID', 'In-Reply-To', 'References', 'Original-Message-ID',
             'X-Failed-Recipients', 'Auto-Submitted',
@@ -313,7 +363,7 @@ class Providers:
         for message_id in message_ids[:8]:
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', message_id):
                 continue
-            original = self._json('Gmail', 'GET', f'{base}/messages/{message_id}', headers=headers, params=metadata)
+            original = self._json('Gmail', 'GET', f'{GMAIL_MAILBOX}/messages/{message_id}', headers=headers, params=metadata)
             if not isinstance(original, dict):
                 raise ProviderError('Gmail', 'returned invalid message metadata.')
             source = gmail_headers(original)
@@ -322,7 +372,7 @@ class Providers:
             if not isinstance(thread_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', thread_id) or not original_id or recipient not in to_addresses:
                 continue
             if thread_id not in threads:
-                thread = self._json('Gmail', 'GET', f'{base}/threads/{thread_id}', headers=headers, params=metadata)
+                thread = self._json('Gmail', 'GET', f'{GMAIL_MAILBOX}/threads/{thread_id}', headers=headers, params=metadata)
                 if not isinstance(thread, dict) or not isinstance(thread.get('messages'), list):
                     raise ProviderError('Gmail', 'returned invalid thread metadata.')
                 threads[thread_id] = thread

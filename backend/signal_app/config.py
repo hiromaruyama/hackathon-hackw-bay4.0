@@ -9,6 +9,8 @@ from dotenv import dotenv_values
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+GMAIL_PUSH_PATH = '/api/webhooks/gmail'
+PUBSUB_RESOURCE = re.compile(r'projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/(topics|subscriptions)/[A-Za-z][A-Za-z0-9_.~+%-]{2,254}')
 EMAIL_PATTERN = re.compile(r'[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+')
 
 
@@ -37,6 +39,9 @@ class Settings:
     gmail_client_secret: str = field(default='', repr=False)
     gmail_refresh_token: str = field(default='', repr=False)
     gmail_feedback_refresh_token: str = field(default='', repr=False)
+    gmail_pubsub_topic: str = ''
+    gmail_pubsub_subscription: str = ''
+    gmail_pubsub_service_account: str | None = None
     gmail_sender: str | None = None
     test_recipient: str | None = None
     test_send_limit_per_hour: int = 6
@@ -78,6 +83,20 @@ class Settings:
         if None in suppressed:
             raise ValueError('SIGNAL_SUPPRESSED_RECIPIENTS must contain comma-separated email addresses.')
 
+        gmail_topic = get('GMAIL_PUBSUB_TOPIC')
+        gmail_subscription = get('GMAIL_PUBSUB_SUBSCRIPTION')
+        gmail_push_account = email('GMAIL_PUBSUB_SERVICE_ACCOUNT')
+        if any((gmail_topic, gmail_subscription, gmail_push_account)):
+            topic = PUBSUB_RESOURCE.fullmatch(gmail_topic)
+            subscription = PUBSUB_RESOURCE.fullmatch(gmail_subscription)
+            if (not topic or not subscription or topic[1] != subscription[1]
+                    or topic[2] != 'topics' or subscription[2] != 'subscriptions'):
+                raise ValueError('Use full Gmail Pub/Sub topic and subscription names in the same Google Cloud project.')
+            if not gmail_push_account or not gmail_push_account.endswith('.iam.gserviceaccount.com'):
+                raise ValueError('GMAIL_PUBSUB_SERVICE_ACCOUNT must be a dedicated Google service account email.')
+            if parsed.scheme != 'https':
+                raise ValueError('Gmail Pub/Sub push requires an HTTPS SIGNAL_PUBLIC_ORIGIN.')
+
         linkedin_profile = get('SIGNAL_LINKEDIN_TEST_PROFILE_URL')
         if linkedin_profile:
             profile = urlsplit(linkedin_profile)
@@ -117,6 +136,8 @@ class Settings:
             neo4j_database=get('NEO4J_DATABASE') or None, gmail_client_id=get('GMAIL_CLIENT_ID'),
             gmail_client_secret=get('GMAIL_CLIENT_SECRET'), gmail_refresh_token=get('GMAIL_REFRESH_TOKEN'),
             gmail_feedback_refresh_token=get('GMAIL_FEEDBACK_REFRESH_TOKEN'),
+            gmail_pubsub_topic=gmail_topic, gmail_pubsub_subscription=gmail_subscription,
+            gmail_pubsub_service_account=gmail_push_account,
             gmail_sender=email('GMAIL_SENDER_ADDRESS'), test_recipient=email('SIGNAL_TEST_RECIPIENT'),
             test_send_limit_per_hour=test_send_limit,
             linkedin_test_profile_url=linkedin_profile or None,
@@ -141,7 +162,17 @@ class Settings:
 
     @property
     def gmail_feedback_configured(self) -> bool:
-        return bool(self.gmail_configured and self.gmail_feedback_refresh_token)
+        return all((self.gmail_client_id, self.gmail_client_secret, self.gmail_feedback_refresh_token,
+                    self.gmail_sender, self.test_recipient))
+
+    @property
+    def gmail_push_configured(self) -> bool:
+        return self.gmail_feedback_configured and all((self.gmail_pubsub_topic, self.gmail_pubsub_subscription,
+                                                       self.gmail_pubsub_service_account))
+
+    @property
+    def gmail_push_audience(self) -> str:
+        return self.public_origin + GMAIL_PUSH_PATH
 
     @property
     def flexprice_configured(self) -> bool:
