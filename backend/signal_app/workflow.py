@@ -8,7 +8,7 @@ from .config import EMAIL_PATTERN, Settings
 from .errors import ProviderError, SignalError
 from .models import (
     INITIAL_DISCOVERY_LIMIT, MAX_DISCOVERY_ACCOUNTS, Account, Activity, ApproveIcp, DispatchAttempt, Draft, DraftReview,
-    DraftRevision, EditDraft, GmailWatch, GraphInsight, Icp, Lead, Pipeline, PipelineChange, PipelineEvent, Product, ProductInput,
+    DraftRevision, EditDraft, GmailWatch, GraphInsight, Icp, Lead, PendingDiscoveryExpansion, Pipeline, PipelineChange, PipelineEvent, Product, ProductInput,
     ResearchBatch, ResearchSchedule, ReviewDraft, ScheduleDraft, State,
     Usage, UsageEvent, UsageOperation, Workspace,
 )
@@ -118,6 +118,8 @@ class Workflow:
                     else:
                         action = 'Review the current draft revision'
                     lead = lead.model_copy(update={'next_action': action})
+                elif lead.stage == 'matched' and account and account.recommendation == 'contact' and account.enrichment_status != 'not_started':
+                    lead = lead.model_copy(update={'next_action': 'Write a source-backed draft'})
                 leads.append(lead)
             stage_counts = Counter(lead.stage for lead in leads)
             reached_contacted = sum(lead.stage != 'matched' for lead in leads)
@@ -159,6 +161,7 @@ class Workflow:
             state.approved_icp_revision = None
             state.discovery_revision = None
             state.research_batch = None
+            state.pending_discovery_expansion = None
             state.research_completed_at = None
             state.research_scheduled_attempt_at = None
             state.accounts = []
@@ -198,6 +201,7 @@ class Workflow:
             state.approved_icp_revision = revision
             state.discovery_revision = None
             state.research_batch = None
+            state.pending_discovery_expansion = None
             state.research_completed_at = None
             state.research_scheduled_attempt_at = None
             state.accounts = []
@@ -284,8 +288,9 @@ class Workflow:
 
     def discover_more(self, revision: int, actor: str, source_domains: list[str]) -> Workspace:
         with self._discovery_lock:
-            product, icp, existing = self.store.read(lambda graph, state: (
+            product, icp, existing, pending = self.store.read(lambda graph, state: (
                 state.product, icp_current(state, revision), tuple(account.domain for account in state.accounts),
+                state.pending_discovery_expansion,
             ))
             if len(existing) >= MAX_DISCOVERY_ACCOUNTS:
                 return self.workspace()
@@ -296,7 +301,10 @@ class Workflow:
             if None in normalized:
                 raise SignalError('invalid_source_domain', 'Use public hostnames such as example.com.', 422)
             requested = tuple(dict.fromkeys(domain for domain in normalized if domain))
-            configured = self.settings.discovery_domains
+            normalized_config = [normalize_domain(domain) for domain in self.settings.discovery_domains]
+            if None in normalized_config:
+                raise ProviderError('Tavily', 'requires valid configured research source domains.', 503)
+            configured = tuple(dict.fromkeys(domain for domain in normalized_config if domain))
             if configured and any(not any(domain == root or domain.endswith('.' + root) for root in configured)
                                   for domain in requested):
                 raise SignalError('source_domain_out_of_scope', 'Choose from the configured research source domains.', 422)
@@ -305,7 +313,17 @@ class Workflow:
             if allowed and not remaining_domains:
                 return self.workspace()
 
-            sources = search_more_accounts(self.providers, product, icp, remaining_domains, existing)
+            key = stable_id('discovery-expansion', str(revision), ','.join(sorted(existing)), ','.join(sorted(remaining_domains)))
+            if pending and pending.key == key:
+                sources = pending.sources
+            else:
+                sources = search_more_accounts(self.providers, product, icp, remaining_domains, existing)
+
+                def cache(graph: GraphTransaction, state: State) -> None:
+                    icp_current(state, revision)
+                    state.pending_discovery_expansion = PendingDiscoveryExpansion(key=key, sources=sources)
+
+                self.store.write(cache)
             capacity = min(MAX_DISCOVERY_ACCOUNTS - len(existing), INITIAL_DISCOVERY_LIMIT)
             batch = ResearchBatch(revision=revision, prospects=sources, competitors=[])
             accounts, _ = analyze_research(self.providers, product, icp, batch, exclude_domains=existing, account_limit=capacity)
@@ -323,6 +341,8 @@ class Workflow:
                     additional = {source.id: source for source in retained.additional_prospects}
                     additional.update((source.id, source) for source in sources if source.url in urls)
                     state.research_batch = retained.model_copy(update={'additional_prospects': list(additional.values())[-24:]})
+                if state.pending_discovery_expansion and state.pending_discovery_expansion.key == key:
+                    state.pending_discovery_expansion = None
                 add_activity(state, 'discovery_expanded', actor,
                              f'Added {len(new_accounts)} cited accounts. {len(state.accounts)} accounts are saved.', revision=revision)
 

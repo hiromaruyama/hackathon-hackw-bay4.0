@@ -129,6 +129,11 @@ class ResearchBatch(BaseModel):
     additional_prospects: list[Source] = Field(default_factory=list)
 
 
+class PendingDiscoveryExpansion(BaseModel):
+    key: str
+    sources: list[Source]
+
+
 class Expansion(BaseModel):
     segment: str
     reason: str
@@ -484,6 +489,7 @@ class State(BaseModel):
     approved_icp_revision: int | None = None
     discovery_revision: int | None = None
     research_batch: ResearchBatch | None = None
+    pending_discovery_expansion: PendingDiscoveryExpansion | None = None
     research_completed_at: datetime | None = None
     research_scheduled_attempt_at: datetime | None = None
     accounts: list[Account] = Field(default_factory=list)

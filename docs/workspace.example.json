@@ -29,6 +29,7 @@
     "updated_at": "2026-11-24T18:00:00Z"
   },
   "approved_icp_revision": 2,
+  "more_accounts_available": true,
   "accounts": [
     {
       "id": "acct-example",

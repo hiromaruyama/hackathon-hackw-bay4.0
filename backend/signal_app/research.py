@@ -455,7 +455,7 @@ def analyze_research(providers: Providers, product: Product, icp: Icp, batch: Re
         DiscoveryOutput,
         EXTRACTION_RULE + f' Extract up to {account_limit + 1} distinct prospective companies. Skip any domain in excluded_domains. '
         'Ground each domain in an official source '
-        'or a literal domain reference. For each aligned fit factor quote a supporting excerpt from the company or '
+        'or a literal domain reference. Keep evidence quotes brief and verbatim. For each aligned fit factor quote a supporting excerpt from the company or '
         'a source that names it. Product need must be tied to the product capabilities. Only claim headcount/revenue fit '
         'when the source supports the stated band. Include any dated positive signal and explicit negative signal. '
         'For a hard exclusion, copy the matching approved ICP exclusion into matched_exclusion. Hiring is indirect. '
@@ -466,11 +466,13 @@ def analyze_research(providers: Providers, product: Product, icp: Icp, batch: Re
         'For each evidenced category provide one competitor in competitors. Direct solves the same job with similar software, '
         'indirect solves a broader or adjacent job, and alternative uses a different approach such as a spreadsheet or consultancy. '
         'Support positioning and differences from the stated product with public evidence. Quote public pricing if found. '
+        'Use null for unknown scalar or object values, and empty lists when no items are supported. '
         'In plans, include up to four publicly documented tiers or packages. Quote each plan name, its inclusions, and the '
         'public price from the same source excerpt. Copy the price as printed and leave it empty if it is undisclosed.',
         context(product=public_product(product), approved_icp=icp.fields.model_dump(), excluded_domains=exclude_domains,
                 prospect_sources=sources_for_prompt(prospects), competitor_sources=sources_for_prompt(batch.competitors)),
         max_tokens=7200 if account_limit == MAX_DISCOVERY_ACCOUNTS else 5600,
+        wrap_json=True,
     )
     now = utcnow()
     by_domain = {}

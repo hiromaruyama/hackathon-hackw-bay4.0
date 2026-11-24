@@ -1,4 +1,5 @@
 import base64
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -24,6 +25,10 @@ GMAIL_MAILBOX = 'https://gmail.googleapis.com/gmail/v1/users/me'
 GMAIL_METADATA_SCOPE = 'https://www.googleapis.com/auth/gmail.metadata'
 Result = TypeVar('Result', bound=BaseModel)
 DOMAIN_PATTERN = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
+
+
+class JsonPayload(BaseModel):
+    payload: str
 
 
 def stable_id(prefix: str, *parts: str) -> str:
@@ -174,21 +179,28 @@ class Providers:
             raise ProviderError('ElevenLabs')
         return url
 
-    def complete(self, schema: type[Result], instructions: str, context: str, *, max_tokens: int = 1800) -> Result:
+    def complete(self, schema: type[Result], instructions: str, context: str, *, max_tokens: int = 1800,
+                 wrap_json: bool = False) -> Result:
         if not self.claude:
             raise ProviderError('Claude', 'API credentials are missing.', 503)
         try:
-            request = dict(model=MODEL, output_format=schema, thinking={'type': 'disabled'},
+            if wrap_json:
+                # Discovery's nested schema exceeds Claude's grammar limit. The result still undergoes full local validation.
+                instructions += (' Return one JSON object inside the payload string, without fences. '
+                                 'Use the following schema: ' + json.dumps(schema.model_json_schema()))
+            request = dict(model=MODEL, output_format=JsonPayload if wrap_json else schema, thinking={'type': 'disabled'},
                            output_config={'effort': 'low'}, system=instructions,
                            messages=[{'role': 'user', 'content': context}])
-            response = self.claude.messages.parse(max_tokens=max_tokens, **request)
+            claude = self.claude.with_options(timeout=35) if max_tokens >= 4000 else self.claude
+            response = claude.messages.parse(max_tokens=max_tokens, **request)
             if response.stop_reason == 'max_tokens':
                 # A bounded retry reuses the already retrieved evidence and does not requery Tavily or Hunter.
-                response = self.claude.messages.parse(max_tokens=max_tokens * 2, **request)
+                response = claude.messages.parse(max_tokens=max_tokens * 2, **request)
             if response.parsed_output is None:
                 detail = 'reached its output limit while writing structured data.' if response.stop_reason == 'max_tokens' else 'did not complete the required structured output.'
                 raise ProviderError('Claude', detail)
-            return response.parsed_output
+            output = response.parsed_output
+            return schema.model_validate_json(output.payload) if isinstance(output, JsonPayload) else output
         except anthropic.APITimeoutError:
             raise ProviderError('Claude', 'timed out. Try again.', 504) from None
         except anthropic.APIStatusError as exc:

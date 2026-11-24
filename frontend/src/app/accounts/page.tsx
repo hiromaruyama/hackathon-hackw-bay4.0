@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { RefreshCw, Search, SearchPlus } from "lucide-react";
+import { Plus, RefreshCw, Search } from "lucide-react";
 import { AccountsTable } from "@/components/accounts-table";
 import { AppShell } from "@/components/app-shell";
 import { EvidenceList, InlineAlert, Panel, PanelHeader } from "@/components/signal";
@@ -57,7 +57,7 @@ function Accounts() {
                 </Button>
                 {w.more_accounts_available ? (
                   <Button className="h-10 font-semibold" disabled={Boolean(pending)} onClick={() => run("more")}>
-                    {expanding ? <Spinner data-icon="inline-start" /> : <SearchPlus data-icon="inline-start" />}
+                    {expanding ? <Spinner data-icon="inline-start" /> : <Plus data-icon="inline-start" />}
                     {expanding ? "Finding more…" : "Find more accounts"}
                   </Button>
                 ) : null}
@@ -110,7 +110,7 @@ function Accounts() {
         <Panel aria-busy="true">
           <PanelHeader title="Accounts">
             <span role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Spinner /> Searching public sources. This can take up to 20 seconds.
+              <Spinner /> Searching public sources and checking evidence.
             </span>
           </PanelHeader>
           <div className="flex flex-col gap-3">
