@@ -220,7 +220,7 @@ function AssistantPanel() {
         </div>
       </div>
 
-      <div className="flex shrink-0 flex-col gap-2 border-t bg-background px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5">
+      <div className="flex shrink-0 flex-col gap-2 bg-background px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-5">
         {error ? (
           <div className="mx-auto w-full max-w-3xl">
             <InlineAlert tone="danger" title={error.title}>{error.message}</InlineAlert>
