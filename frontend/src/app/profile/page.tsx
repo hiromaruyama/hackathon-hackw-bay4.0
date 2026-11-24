@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown, ExternalLink, FilePenLine } from "lucide-react";
-import type { EditorView } from "prosemirror-view";
 import { AppShell } from "@/components/app-shell";
 import { IntakeChat } from "@/components/intake-chat";
 import { focusBriefField, ProfileBriefEditor } from "@/components/profile-brief-editor";
@@ -22,7 +21,7 @@ import { useWorkspace } from "@/lib/workspace-context";
 import { dateTime } from "@/lib/format";
 
 export default function ProfilePage() {
-  return <AppShell fullWidth hideAssistant><Profile /></AppShell>;
+  return <AppShell fullWidth><Profile /></AppShell>;
 }
 
 function publicEvidenceLink(value: string | undefined) {
@@ -38,7 +37,6 @@ function Profile() {
   const { product, icp } = workspace!;
   const saved = useMemo(() => savedBrief(product, icp?.fields), [product, icp]);
   const revision = icp?.revision;
-  const editor = useRef<EditorView | null>(null);
   const [tab, setTab] = useState("brief");
   const [edits, setEdits] = useState<Partial<Brief>>({});
   const [carry, setCarry] = useState<Partial<Brief> | null>(null);
@@ -84,7 +82,7 @@ function Profile() {
     const invalid = validateBrief(brief);
     setFieldError(invalid);
     if (invalid) {
-      focusBriefField(editor.current, invalid.key);
+      focusBriefField(invalid.key);
       return;
     }
     setError(null);
@@ -129,8 +127,8 @@ function Profile() {
           </TabsList>
           {tab === "brief" && (
             <nav aria-label="Jump to section" className="col-span-2 row-start-2 flex gap-1">
-              <Button type="button" size="sm" variant="ghost" aria-label="Jump to product" onClick={() => focusBriefField(editor.current, "name")}>Product</Button>
-              <Button type="button" size="sm" variant="ghost" aria-label="Jump to target buyers" onClick={() => focusBriefField(editor.current, "industries")}>Target buyers</Button>
+              <Button type="button" size="sm" variant="ghost" aria-label="Jump to product" onClick={() => focusBriefField("name")}>Product</Button>
+              <Button type="button" size="sm" variant="ghost" aria-label="Jump to target buyers" onClick={() => focusBriefField("industries")}>Target buyers</Button>
             </nav>
           )}
           {tab === "brief" && (
@@ -147,10 +145,7 @@ function Profile() {
         <TabsContent value="brief" forceMount className="data-[state=inactive]:hidden">
           <form id="profile-form" onSubmit={submit}>
             <FieldGroup className="gap-0">
-              <Field data-invalid={Boolean(fieldError) || undefined} className="gap-0">
-                <span id="brief-label" className="sr-only">Profile brief</span>
-                <ProfileBriefEditor value={brief} editorRef={editor} onChange={updateBrief} disabled={busy} invalid={Boolean(fieldError)} />
-              </Field>
+              <ProfileBriefEditor value={brief} onChange={updateBrief} disabled={busy} invalidField={fieldError?.key} />
 
               {expansion && (
                 <section aria-labelledby="adjacent-title" className="flex flex-col gap-2 border-t py-4">
