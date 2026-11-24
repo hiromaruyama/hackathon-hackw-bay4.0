@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -56,6 +57,30 @@ class Evidence(BaseModel):
     source_type: Literal['company', 'filing', 'news', 'job', 'partner', 'web']
     published_at: date | None = None
     retrieved_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class Source:
+    id: str
+    url: str
+    title: str
+    text: str
+    published_at: date | None
+    provider: str
+
+    def prompt_record(self) -> dict:
+        return {
+            'id': self.id, 'url': self.url, 'title': self.title, 'excerpt': self.text,
+            'published_at': self.published_at.isoformat() if self.published_at else None,
+        }
+
+
+class ResearchBatch(BaseModel):
+    revision: int
+    prospects: list[Source]
+    competitors: list[Source]
+    nexla_status: str | None = None
+    focused_search_used: bool = False
 
 
 class Expansion(BaseModel):
@@ -314,6 +339,7 @@ class State(BaseModel):
     icp_versions: list[Icp] = Field(default_factory=list)
     approved_icp_revision: int | None = None
     discovery_revision: int | None = None
+    research_batch: ResearchBatch | None = None
     accounts: list[Account] = Field(default_factory=list)
     competitor: Competitor | None = None
     activity: list[Activity] = Field(default_factory=list)

@@ -26,6 +26,7 @@ class Settings:
     static_dir: Path = BACKEND_ROOT.parent / 'frontend' / 'out'
     anthropic_api_key: str = field(default='', repr=False)
     tavily_api_key: str = field(default='', repr=False)
+    discovery_domains: tuple[str, ...] = ()
     hunter_api_key: str = field(default='', repr=False)
     neo4j_uri: str = ''
     neo4j_username: str = 'neo4j'
@@ -82,6 +83,7 @@ class Settings:
             demo_password=get('SIGNAL_DEMO_PASSWORD'), session_secret=get('SIGNAL_SESSION_SECRET'),
             static_dir=Path(get('SIGNAL_STATIC_DIR', str(cls.static_dir))),
             anthropic_api_key=get('ANTHROPIC_API_KEY'), tavily_api_key=get('TAVILY_API_KEY'),
+            discovery_domains=tuple(item.strip() for item in get('SIGNAL_DISCOVERY_DOMAINS').split(',') if item.strip()),
             hunter_api_key=get('HUNTER_API_KEY'), neo4j_uri=get('NEO4J_URI'),
             neo4j_username=get('NEO4J_USERNAME', 'neo4j'), neo4j_password=get('NEO4J_PASSWORD'),
             neo4j_database=get('NEO4J_DATABASE') or None, gmail_client_id=get('GMAIL_CLIENT_ID'),

@@ -2,7 +2,7 @@
 
 `GET /api/workspace` and successful workflow mutations return the same `Workspace` object. Use [the example response](workspace.example.json) to build the UI without calling providers. The values are synthetic. The running backend reads the saved workspace from Neo4j.
 
-All API routes except `GET /api/health` and `POST /api/session` require a demo session. Send JSON and cookies with requests. For browser writes, the origin must equal `SIGNAL_PUBLIC_ORIGIN` (or Render's external URL). The production UI and API run on the same origin. With Next dev on `http://localhost:3000`, set `SIGNAL_PUBLIC_ORIGIN` to that origin, add `credentials: 'include'` to fetch, and call the API on `http://localhost:8000`. Use the same hostname for both servers.
+All workspace and readiness routes require a demo session. Sign in with `POST /api/session`, then send JSON and cookies with requests. For browser writes, the origin must equal `SIGNAL_PUBLIC_ORIGIN` (or Render's external URL). The production UI and API run on the same origin. With Next dev on `http://localhost:3000`, set `SIGNAL_PUBLIC_ORIGIN` to that origin, add `credentials: 'include'` to fetch, and call the API on `http://localhost:8000`. Use the same hostname for both servers.
 
 ## Routes
 
@@ -16,7 +16,7 @@ All API routes except `GET /api/health` and `POST /api/session` require a demo s
 | `GET /api/workspace` | — | `Workspace` |
 | `POST /api/icp/generate` | `{"description":"…","name":"GeoFlow","capabilities":[],"constraints":[],"customers_and_wins":[],"pricing":null,"contract_value":null}` | Workspace with a proposed ICP |
 | `POST /api/icp/approve` | `{"revision":1,"fields":{"industries":["Renewable energy"],"geography":["United States"],"headcount_band":null,"revenue_band":null,"buyer_titles":["Project Development Director"],"seniority":[],"triggers":[],"exclusions":[]},"expansion_decision":"dismiss"}` | Workspace with a new approved revision. `expansion_decision` is `accept`, `edit`, or `dismiss`. For `edit` include `expansion_segment`. |
-| `POST /api/discover` | `{"revision":2}` and optional `"refresh":true` | Workspace with up to three current accounts, graph paths, and a competitor when evidence supports one. Repeated requests use saved results for the approved revision unless refresh is explicit. |
+| `POST /api/discover` | `{"revision":2}` and optional `"refresh":true` | Workspace with up to three current accounts, graph paths, and a competitor when evidence supports one. Repeated requests use saved results for the approved revision unless refresh is explicit. If extraction fails, retry with the same revision to use the saved sources. |
 | `POST /api/accounts/{id}/draft` | — | Workspace with enrichment status and a pending draft. A role-based fallback is labeled. |
 | `PATCH /api/drafts/{id}` | `{"expected_revision":1,"subject":"…","body":"…"}` | Workspace with the next pending revision |
 | `POST /api/drafts/{id}/review` | `{"revision":2,"decision":"approve"}` | Workspace with the review decision. `decision` is `approve` or `reject`. |

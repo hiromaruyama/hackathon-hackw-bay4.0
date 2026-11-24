@@ -9,9 +9,9 @@ from pydantic import Field
 from .errors import ProviderError, SignalError
 from .models import (
     Account, Competitor, Confidence, Description, Evidence, Expansion, Icp, IcpFields,
-    InputModel, NegativeSignal, Product, ShortText, Signal, SignalKind, SynthesisMode,
+    InputModel, NegativeSignal, Product, ResearchBatch, ShortText, Signal, SignalKind, Source, SynthesisMode,
 )
-from .providers import Providers, Source, as_date, clean_text, normalize_domain, stable_id, utcnow
+from .providers import Providers, as_date, clean_text, normalize_domain, stable_id, utcnow
 
 
 EXTRACTION_RULE = (
@@ -23,8 +23,8 @@ FIT_WEIGHTS = {'industry': 35, 'company_size': 20, 'product_need': 35, 'geograph
 
 
 class Quote(InputModel):
-    source_id: ShortText
-    quote: ShortText
+    source_id: str
+    quote: str
 
 
 class ExpansionOutput(InputModel):
@@ -52,16 +52,16 @@ class ProfileOutput(InputModel):
 
 class SignalOutput(InputModel):
     kind: SignalKind
-    summary: ShortText
+    summary: str
     evidence: Quote
-    date_quote: ShortText | None = None
+    date_quote: str | None = None
 
 
 class NegativeOutput(InputModel):
-    reason: ShortText
+    reason: str
     evidence: Quote
     hard_exclusion: bool
-    matched_exclusion: ShortText | None = None
+    matched_exclusion: str | None = None
 
 
 class FitEvidence(InputModel):
@@ -72,29 +72,29 @@ class FitEvidence(InputModel):
 
 
 class CandidateOutput(InputModel):
-    name: ShortText
-    domain: ShortText
+    name: str
+    domain: str
     identity: Quote
-    industry: ShortText | None = None
-    company_size: ShortText | None = None
-    geography: ShortText | None = None
+    industry: str | None = None
+    company_size: str | None = None
+    geography: str | None = None
     fit: FitEvidence = Field(default_factory=FitEvidence)
     signal: SignalOutput | None = None
     negative: NegativeOutput | None = None
 
 
 class CompetitorOutput(InputModel):
-    name: ShortText
-    positioning: ShortText
+    name: str
+    positioning: str
     positioning_evidence: Quote
-    differentiator: ShortText
+    differentiator: str
     differentiation_evidence: Quote
-    pricing: ShortText | None = None
+    pricing: str | None = None
     pricing_evidence: Quote | None = None
 
 
 class DiscoveryOutput(InputModel):
-    accounts: list[CandidateOutput] = Field(max_length=8)
+    accounts: list[CandidateOutput]
     competitor: CompetitorOutput | None = None
 
 
@@ -129,9 +129,9 @@ def sources_for_prompt(sources: list[Source]) -> list[dict]:
 def evidence_for(quote: Quote | None, sources: dict[str, Source], now: datetime, domain: str | None = None) -> Evidence | None:
     if not quote or not (source := sources.get(quote.source_id)):
         return None
-    snippet = clean_text(quote.quote, 250)
-    offset = source.text.casefold().find(snippet.casefold())
-    if len(snippet) < 12 or offset < 0:
+    snippet = clean_text(quote.quote, 3000)
+    match = re.search(re.escape(snippet), source.text, re.IGNORECASE) if len(snippet) >= 12 else None
+    if not match:
         return None
     host = urlsplit(source.url).hostname or ''
     if source.provider == 'nexla':
@@ -144,7 +144,7 @@ def evidence_for(quote: Quote | None, sources: dict[str, Source], now: datetime,
         kind = 'company'
     else:
         kind = 'news' if source.published_at else 'web'
-    excerpt = source.text[offset:offset + len(snippet)]
+    excerpt = match.group()[:320]
     return Evidence(
         id=stable_id('ev', source.url, excerpt), url=source.url, title=source.title, excerpt=excerpt,
         source_type=kind, published_at=source.published_at, retrieved_at=now,
@@ -252,9 +252,9 @@ def make_account(candidate: CandidateOutput, icp: Icp, sources: dict[str, Source
         recommendation, tier, reason = 'hold', 'B', 'A recent buying signal is not sufficiently supported by the available sources.'
 
     return Account(
-        id=account_id, name=name, domain=domain, industry=candidate.industry if 'industry' in supported_fit else None,
-        company_size=candidate.company_size if 'company_size' in supported_fit else None,
-        geography=candidate.geography if 'geography' in supported_fit else None,
+        id=account_id, name=name, domain=domain, industry=clean_text(candidate.industry) if 'industry' in supported_fit else None,
+        company_size=clean_text(candidate.company_size) if 'company_size' in supported_fit else None,
+        geography=clean_text(candidate.geography) if 'geography' in supported_fit else None,
         buyer_role=next(iter(icp.fields.buyer_titles), None), fit_score=fit, intent_score=intent,
         tier=tier, recommendation=recommendation, reason=reason, researched_at=now, icp_revision=icp.revision,
         evidence=list(evidence.values()), signal=signal, negative_signal=negative,
@@ -277,14 +277,14 @@ def make_competitor(candidate: CompetitorOutput | None, sources: dict[str, Sourc
     )
 
 
-def discover(providers: Providers, product: Product, icp: Icp, use_nexla: bool) -> tuple[list[Account], Competitor | None, str | None]:
+def gather_research(providers: Providers, product: Product, icp: Icp, use_nexla: bool, source_domains: tuple[str, ...]) -> ResearchBatch:
     fields = icp.fields
     industry = clean_text(', '.join(fields.industries[:2]), 100) or clean_text(product.description, 100)
     geography = clean_text(', '.join(fields.geography[:2]), 60)
     criteria = clean_text(', '.join(fields.triggers[:2]), 100)
     prospects = providers.search(
         f'{industry} {geography} official company press releases {utcnow().year} {criteria or "recent project announcements"}',
-        limit=10,
+        limit=10, include_details=bool(source_domains), source_domains=source_domains,
     )
     try:
         competitors = providers.search(f'{clean_text(product.description, 130)} vendors software platform official pricing capabilities competitors', limit=3)
@@ -299,9 +299,27 @@ def discover(providers: Providers, product: Product, icp: Icp, use_nexla: bool) 
         except ProviderError:
             nexla_status = 'Nexla discovery was unavailable. Tavily sources are shown.'
 
-    if not prospects:
-        return [], None, nexla_status
-    sources = {source.id: source for source in prospects + competitors}
+    return ResearchBatch(revision=icp.revision, prospects=prospects, competitors=competitors, nexla_status=nexla_status)
+
+
+def focus_research(providers: Providers, product: Product, icp: Icp, batch: ResearchBatch, accounts: list[Account], source_domains: tuple[str, ...]) -> ResearchBatch:
+    industry = clean_text(', '.join(icp.fields.industries[:2]), 110) or clean_text(product.description, 100)
+    geography = clean_text(', '.join(icp.fields.geography[:2]), 50)
+    trigger = clean_text(next(iter(icp.fields.triggers), ''), 90)
+    anchor = next((account.name for account in accounts if not account.negative_signal), '')
+    query = f'{anchor} and other {industry} in {geography} original developer news releases {trigger} {utcnow().year}'
+    try:
+        details = providers.search(query, limit=6, include_details=True, source_domains=source_domains)
+    except ProviderError:
+        details = []
+    sources = {source.id: source for source in batch.prospects + details}
+    return batch.model_copy(update={'prospects': list(sources.values()), 'focused_search_used': True})
+
+
+def analyze_research(providers: Providers, product: Product, icp: Icp, batch: ResearchBatch) -> tuple[list[Account], Competitor | None]:
+    if not batch.prospects:
+        return [], None
+    sources = {source.id: source for source in batch.prospects + batch.competitors}
     out = providers.complete(
         DiscoveryOutput,
         EXTRACTION_RULE + ' Extract up to four distinct prospective companies with a domain grounded in an official source '
@@ -310,13 +328,13 @@ def discover(providers: Providers, product: Product, icp: Icp, use_nexla: bool) 
         'when the source supports the stated band. Include any dated positive signal and explicit negative signal. '
         'For a hard exclusion, copy the matching approved ICP exclusion into matched_exclusion. Hiring is indirect. Provide one competitor '
         'with evidence for positioning, difference from the stated product, and public pricing if found.',
-        context(product=public_product(product), approved_icp=fields.model_dump(),
-                prospect_sources=sources_for_prompt(prospects), competitor_sources=sources_for_prompt(competitors)),
+        context(product=public_product(product), approved_icp=icp.fields.model_dump(),
+                prospect_sources=sources_for_prompt(batch.prospects), competitor_sources=sources_for_prompt(batch.competitors)),
         max_tokens=4600,
     )
     now = utcnow()
     by_domain = {}
-    for candidate in out.accounts:
+    for candidate in out.accounts[:8]:
         if account := make_account(candidate, icp, sources, now):
             previous = by_domain.get(account.domain)
             if not previous or (account.negative_signal is not None, account.fit_score, account.intent_score) > (
@@ -328,7 +346,7 @@ def discover(providers: Providers, product: Product, icp: Icp, use_nexla: bool) 
     selected = ranked[:3]
     if contrast and contrast not in selected:
         selected[-1] = contrast
-    return selected, make_competitor(out.competitor, sources, now), nexla_status
+    return selected, make_competitor(out.competitor, sources, now)
 
 
 def check_copy(providers: Providers, product: Product, evidence: list[Evidence], subject: str, body: str) -> None:

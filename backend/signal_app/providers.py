@@ -16,7 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 from .config import EMAIL_PATTERN, Settings, mailbox
 from .errors import ProviderError
-from .models import Contact, DraftRevision, EnrichmentStatus, UsageEvent
+from .models import Contact, DraftRevision, EnrichmentStatus, Source, UsageEvent
 
 
 MODEL = 'claude-haiku-5-5'
@@ -70,33 +70,19 @@ def clean_text(value: object, limit: int = 400) -> str:
     return EMAIL_PATTERN.sub('[email redacted]', ' '.join(value.split()))[:limit]
 
 
-@dataclass(frozen=True)
-class Source:
-    id: str
-    url: str
-    title: str
-    text: str
-    published_at: date | None
-    provider: str
-
-    @classmethod
-    def parse(cls, row: dict, provider: str) -> 'Source | None':
-        raw_url = row.get('url') or row.get('source_url')
-        url = source_url(raw_url) if isinstance(raw_url, str) else None
-        content = clean_text(row.get('content') or row.get('excerpt'), 3000)
-        if not url or not content:
-            return None
-        return cls(
-            id=stable_id('src', url), url=url, title=clean_text(row.get('title'), 200) or url,
-            text=content, published_at=as_date(row.get('published_date') or row.get('published_at')),
-            provider=provider,
-        )
-
-    def prompt_record(self) -> dict:
-        return {
-            'id': self.id, 'url': self.url, 'title': self.title, 'excerpt': self.text,
-            'published_at': self.published_at.isoformat() if self.published_at else None,
-        }
+def parse_source(row: dict, provider: str) -> Source | None:
+    raw_url = row.get('url') or row.get('source_url')
+    url = source_url(raw_url) if isinstance(raw_url, str) else None
+    excerpt = clean_text(row.get('content') or row.get('excerpt'), 1500)
+    raw_content = clean_text(row.get('raw_content'), 1800)
+    content = ' '.join(part for part in dict.fromkeys((excerpt, raw_content)) if part)[:3000]
+    if not url or not content:
+        return None
+    return Source(
+        id=stable_id('src', url), url=url, title=clean_text(row.get('title'), 200) or url,
+        text=content, published_at=as_date(row.get('published_date') or row.get('published_at')),
+        provider=provider,
+    )
 
 
 @dataclass(frozen=True)
@@ -174,22 +160,32 @@ class Providers:
             else:
                 detail = 'did not return a usable response.'
             raise ProviderError('Claude', detail) from None
-        except (anthropic.APIError, ValidationError, ValueError):
+        except ValidationError as exc:
+            errors = ', '.join(sorted({str(item['type']) for item in exc.errors(include_input=False, include_context=False)}))
+            logging.getLogger(__name__).warning('Claude response for %s failed schema validation (%s)', schema.__name__, errors)
+            raise ProviderError('Claude', 'returned structured data that failed validation.') from None
+        except (anthropic.APIError, ValueError):
             raise ProviderError('Claude') from None
 
-    def search(self, query: str, *, limit: int = 8) -> list[Source]:
+    def search(self, query: str, *, limit: int = 8, include_details: bool = False, source_domains: tuple[str, ...] = ()) -> list[Source]:
         if not self.settings.tavily_api_key:
             raise ProviderError('Tavily', 'API credentials are missing.', 503)
+        options = {'query': query[:390], 'search_depth': 'basic', 'max_results': limit,
+                   'include_published_date': True, 'include_answer': False, 'include_raw_content': include_details}
+        if source_domains:
+            domains = [normalize_domain(item) for item in source_domains]
+            if None in domains or len(domains) > 10:
+                raise ProviderError('Tavily', 'needs at most ten valid public hostnames for source filtering.', 503)
+            options['include_domains'] = list(dict.fromkeys(domains))
         payload = self._json(
             'Tavily', 'POST', 'https://api.tavily.com/search',
             headers={'Authorization': f'Bearer {self.settings.tavily_api_key}'},
-            json={'query': query[:390], 'search_depth': 'basic', 'max_results': limit,
-                  'include_published_date': True, 'include_answer': False},
+            json=options,
         )
         results = payload.get('results') if isinstance(payload, dict) else None
         if not isinstance(results, list):
             raise ProviderError('Tavily')
-        found = [Source.parse(row, 'tavily') for row in results[:limit] if isinstance(row, dict)]
+        found = [parse_source(row, 'tavily') for row in results[:limit] if isinstance(row, dict)]
         return list({source.id: source for source in found if source}.values())
 
     def nexla_sources(self) -> list[Source]:
@@ -205,7 +201,7 @@ class Providers:
             payload = payload.get('data', payload.get('records'))
         if not isinstance(payload, list):
             raise ProviderError('Nexla')
-        found = [Source.parse(row, 'nexla') for row in payload[:3] if isinstance(row, dict)]
+        found = [parse_source(row, 'nexla') for row in payload[:3] if isinstance(row, dict)]
         return [source for source in found if source]
 
     def enrich(self, domain: str, target_role: str) -> Enriched:

@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from signal_app.config import Settings
+from signal_app.errors import ProviderError
 from signal_app.main import create_app
 from signal_app.models import Contact, Workspace
 from signal_app.providers import Delivery, Enriched, Source
@@ -46,6 +47,8 @@ class SimulatedProviders:
         self.resume_send = None
         self.invalid_citation = False
         self.reject_copy = False
+        self.reject_discovery = False
+        self.only_hold = False
         self.no_contact = False
         self.recent = date.today() - timedelta(days=14)
         self.prospects = [
@@ -64,7 +67,7 @@ class SimulatedProviders:
     def close(self):
         pass
 
-    def search(self, query, *, limit):
+    def search(self, query, *, limit, include_details=False, source_domains=()):
         self.searches.append(query)
         return [self.competitor] if 'vendors software' in query or 'adjacent B2B' in query else self.prospects
 
@@ -76,6 +79,8 @@ class SimulatedProviders:
                               'evidence': proof('siting', 'Siting Tool provides parcel screening.')},
             })
         if schema is DiscoveryOutput:
+            if self.reject_discovery:
+                raise ProviderError('Claude', 'failed the simulated extraction.')
             def match(source, name, staff):
                 summary = f'{name} announced site analysis for its new solar project.'
                 industry = proof(source, f'{name} develops utility-scale solar in the United States.')
@@ -88,7 +93,7 @@ class SimulatedProviders:
                 }
 
             bright = match('bright', 'Bright Energy', '180')
-            return schema.model_validate({
+            results = {
                 'accounts': [bright, {**bright, 'domain': 'www.bright.example.com'}, match('west', 'West Energy', '100'), {
                     'name': 'North Storage', 'domain': 'north.example.com',
                     'identity': proof('north', 'North Storage develops exclusively in Ontario.'),
@@ -101,7 +106,10 @@ class SimulatedProviders:
                                'differentiator': 'Published starting plan',
                                'differentiation_evidence': proof('siting', 'Its public plan starts at $29 per month.'),
                                'pricing': '$29/month', 'pricing_evidence': proof('siting', '$29 per month.')},
-            })
+            }
+            if self.only_hold:
+                results['accounts'] = results['accounts'][-1:]
+            return schema.model_validate(results)
         if schema is CopyOutput:
             evidence = json.loads(context)['required_graph_evidence_id']
             self.graph_evidence_used.append(evidence)
@@ -161,7 +169,7 @@ def sign_in(client):
     return post(client, '/api/session', {'password': PASSWORD})
 
 
-def discover_accounts(client):
+def approve_profile(client):
     sign_in(client)
     proposed = post(client, '/api/icp/generate', {'name': 'GeoFlow', 'description': 'Compare project development sites.'})
     assert proposed['icp']['confidence']['revenue_band'] == 0
@@ -170,7 +178,11 @@ def discover_accounts(client):
     approved = post(client, '/api/icp/approve', {'revision': 1, 'fields': FIELDS, 'expansion_decision': 'dismiss'})
     assert approved['approved_icp_revision'] == 2
     assert post(client, '/api/discover', {'revision': 1}, 409)['error']['code'] == 'icp_not_approved'
-    return post(client, '/api/discover', {'revision': 2})
+    return approved['approved_icp_revision']
+
+
+def discover_accounts(client):
+    return post(client, '/api/discover', {'revision': approve_profile(client)})
 
 
 def get_draft(client, account_id):
@@ -298,6 +310,40 @@ def test_rejected_generated_copy_falls_back_to_a_literal_graph_quote(system):
     assert draft['synthesis_mode'] == 'grounded_template'
     assert cited in draft['body']
     assert draft['review_status'] == 'pending_review'
+
+
+def test_discovery_retry_reuses_sources_after_model_failure(system):
+    client, providers = system
+    revision = approve_profile(client)
+    providers.reject_discovery = True
+    first = post(client, '/api/discover', {'revision': revision}, 502)
+    assert first['error']['code'] == 'claude_unavailable'
+    searches = len(providers.searches)
+    providers.reject_discovery = False
+    assert len(post(client, '/api/discover', {'revision': revision})['accounts']) == 3
+    assert len(providers.searches) == searches
+
+
+def test_weak_research_makes_at_most_one_focused_search(system):
+    client, providers = system
+    providers.only_hold = True
+    revision = approve_profile(client)
+    first = post(client, '/api/discover', {'revision': revision})
+    second = post(client, '/api/discover', {'revision': revision})
+    assert first['accounts'] == second['accounts']
+    assert len([query for query in providers.searches if 'original developer news releases' in query]) == 1
+    assert len(providers.searches) == 4
+
+
+@pytest.mark.parametrize('system', [{'suppressed_recipients': frozenset({'demo@example.com'})}], indirect=True)
+def test_suppressed_test_recipient_blocks_before_gmail(system):
+    client, providers = system
+    _, draft = prepare_draft(client)
+    route = f'/api/drafts/{draft["id"]}'
+    post(client, route + '/review', {'revision': 1, 'decision': 'approve'})
+    blocked = post(client, route + '/send', {'revision': 1}, 409)
+    assert blocked['error']['code'] == 'recipient_suppressed'
+    assert not providers.sent
 
 
 def test_published_fixture_matches_the_api_model():

@@ -9,7 +9,7 @@ from .models import (
     Lead, Pipeline, PipelineEvent, Product, ProductInput, ReviewDraft, State, Usage, UsageEvent, Workspace,
 )
 from .providers import Delivery, Enriched, Providers, stable_id, utcnow
-from .research import check_copy, discover, make_profile, write_copy
+from .research import analyze_research, check_copy, focus_research, gather_research, make_profile, write_copy
 from .store import GraphTransaction, Neo4jStore
 
 
@@ -133,6 +133,7 @@ class Workflow:
                                           confidence=confidence, expansion=expansion, updated_at=utcnow()))
             state.approved_icp_revision = None
             state.discovery_revision = None
+            state.research_batch = None
             state.accounts = []
             state.competitor = None
             add_activity(state, 'icp_generated', actor, 'An editable ICP was generated with source-backed expansion where available.', revision=revision)
@@ -167,6 +168,7 @@ class Workflow:
                                           expansion=expansion, expansion_decision=request.expansion_decision, updated_at=utcnow()))
             state.approved_icp_revision = revision
             state.discovery_revision = None
+            state.research_batch = None
             state.accounts = []
             state.competitor = None
             add_activity(state, 'icp_approved', actor, 'The edited ICP revision was approved.', revision=revision)
@@ -179,13 +181,28 @@ class Workflow:
             completed = self.store.read(lambda graph, state: state.discovery_revision == icp_current(state, revision).revision)
             if completed and not refresh:
                 return self.workspace()
-            return self._run_discovery(revision, actor)
+            return self._run_discovery(revision, actor, refresh=refresh)
 
-    def _run_discovery(self, revision: int, actor: str) -> Workspace:
-        product, icp = self.store.read(lambda graph, state: (state.product, icp_current(state, revision)))
+    def _run_discovery(self, revision: int, actor: str, *, refresh: bool) -> Workspace:
+        product, icp, batch = self.store.read(lambda graph, state: (state.product, icp_current(state, revision), state.research_batch))
         if not product:
             raise SignalError('product_missing', 'Generate an ICP from a product first.')
-        accounts, competitor, nexla_status = discover(self.providers, product, icp, bool(self.settings.nexla_sync_url))
+        def cache(graph: GraphTransaction, state: State) -> None:
+            icp_current(state, revision)
+            state.research_batch = batch
+            state.discovery_revision = None
+
+        if refresh or not batch or batch.revision != revision:
+            batch = gather_research(self.providers, product, icp, bool(self.settings.nexla_sync_url), self.settings.discovery_domains)
+            self.store.write(cache)
+
+        accounts, competitor = analyze_research(self.providers, product, icp, batch)
+        if not batch.focused_search_used and (len(accounts) < 2 or not any(a.recommendation == 'contact' for a in accounts)):
+            previous_sources = batch.prospects
+            batch = focus_research(self.providers, product, icp, batch, accounts, self.settings.discovery_domains)
+            self.store.write(cache)
+            if batch.prospects != previous_sources:
+                accounts, competitor = analyze_research(self.providers, product, icp, batch)
 
         def save(graph: GraphTransaction, state: State) -> None:
             icp_current(state, revision)
@@ -210,8 +227,8 @@ class Workflow:
             add_activity(state, 'discovery_completed', actor, f'Saved {len(accounts)} sourced accounts for the approved ICP.', revision=revision)
             if competitor:
                 add_activity(state, 'competitor_sourced', 'system', 'A competitor comparison was saved with public citations.')
-            if nexla_status:
-                add_activity(state, 'nexla_discovery', 'system', nexla_status)
+            if batch.nexla_status:
+                add_activity(state, 'nexla_discovery', 'system', batch.nexla_status)
 
         self.store.write(save)
         return self.workspace()

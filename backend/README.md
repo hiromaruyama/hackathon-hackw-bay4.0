@@ -19,7 +19,7 @@ Fill `backend/.env` locally. The file is ignored by Git. Restart the service aft
 | Provider | Required configuration and check |
 | --- | --- |
 | Claude | `ANTHROPIC_API_KEY` with credit and access to `claude-haiku-5-5`. Generate a GeoFlow profile as a smoke check. |
-| Tavily | `TAVILY_API_KEY`. Check signed-in Discovery for real source URLs and exact excerpts. |
+| Tavily | `TAVILY_API_KEY`. Check signed-in Discovery for real source URLs and exact excerpts. Optional `SIGNAL_DISCOVERY_DOMAINS` restricts prospective-company searches to up to ten comma-separated public hostnames. Leave it blank for open research. |
 | Hunter | `HUNTER_API_KEY`. Draft for a Contact-tier account and verify the reported role and provider status. |
 | Neo4j | `NEO4J_URI`, `NEO4J_USERNAME`, and `NEO4J_PASSWORD`. Aura's **Inspect → Overview → Connection URI** gives the `neo4j+s://` value. Leave `NEO4J_DATABASE` blank for the instance default. Set it only when a named database should be selected explicitly. |
 | Gmail | Enable the Gmail API in a Google Cloud project. Authorize the controlled sender with `gmail.send` and offline OAuth access. Set `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_SENDER_ADDRESS`, and `SIGNAL_TEST_RECIPIENT`. The test recipient should be a mailbox the team controls. Use a comma-delimited `SIGNAL_SUPPRESSED_RECIPIENTS` to block configured addresses. |
@@ -36,7 +36,7 @@ Build Next.js as a static export. Copy the exported files into the backend runti
 
 ## Data flow and approval boundary
 
-1. Claude generates a structured ICP. Rep approval creates a new version. Tavily supplies public excerpts for discovery. Backend code binds quoted evidence to the company and computes the fit and intent tiers. Repeat discovery requests use the stored result unless explicitly refreshed.
+1. Claude generates a structured ICP. Rep approval creates a new version. Tavily supplies public excerpts for discovery. Backend code binds quoted evidence to the company and computes the fit and intent tiers. Discovery makes at most two initial searches and one focused follow-up if coverage is weak. The excerpts are saved before model analysis, so retries can use the same sources. Completed discovery uses the stored result unless explicitly refreshed.
 2. The discovery transaction persists `Product`, `Company`, `Signal`, `Evidence`, and `Competitor` nodes alongside workspace state. The draft action runs `Product → MATCHED_TO → Company → HAS_SIGNAL → Signal → EVIDENCED_BY → Evidence`, persists the role-matched Hunter result as `Person → WORKS_AT → Company`, and asks Claude for cited copy. When copy review rejects generated personalization, the fallback attributes a literal graph excerpt and uses only supplied product facts. Workspace JSON and draft snapshots are stored in Neo4j. A missing Hunter contact is labeled in the resulting draft.
 3. The rep approves the exact revision, recipient, subject, and body. A Neo4j write lock serializes competing actions before reserving dispatch. Gmail receives only the approved text and configured test recipient. Provider confirmation and the pipeline event are saved together. A failed or uncertain send leaves the lead at its previous stage. The draft stays locked after the first attempted dispatch.
 
