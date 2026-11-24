@@ -724,6 +724,10 @@ def test_new_sandbox_wallet_credits_unlock_one_previously_blocked_lookup(system)
     path = f'/api/accounts/{second["id"]}/enrich'
     assert post(client, path, expected=402)['error']['code'] == 'insufficient_enrichment_credits'
     assert len(providers.lookups) == 1
+    # Existing workspaces persisted the last balance on Usage before the exact Decimal field was added.
+    def remove_new_balance_field(graph, state):
+        state.billing_balance_observed = None
+    providers.store.write(remove_new_balance_field)
     providers.balance = Decimal('2')
     recovered = post(client, path)
     assert recovered['usage']['available_for_enrichment'] == 0

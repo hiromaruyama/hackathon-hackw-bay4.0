@@ -1,5 +1,6 @@
 from collections import Counter
 from datetime import datetime, timedelta
+from decimal import Decimal
 from threading import Lock
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
