@@ -4,12 +4,6 @@ Signal helps a B2B founder answer three questions before reaching out to a buyer
 
 **[Open Signal on Render](https://signal-gtm.onrender.com/)** · [Watch the 2:32 demo](https://drive.google.com/file/d/1PIK9R0OzVHW8Rie1fASEZQz6TQf3v6jD/view) · [System design and graph queries](docs/architecture.md) · [Sponsor checklist](docs/sponsor-requirements.md). Judges land directly on Home in a private browser copy of the saved GeoFlow workspace. Edits stay in that copy. The app uses its configured live integrations.
 
-## Who pays for Signal
-
-Signal is designed for B2B founders and small sales teams that sell to a specific market. A rep has to piece together company announcements, verified buyer contacts, and outreach history to decide who to contact. Signal keeps that evidence with the draft and pipeline record, so a team can spend less time reconstructing research and trace a deal back to the buying signal that prompted the first message.
-
-The proposed business model is a monthly workspace subscription with included usage credits and paid top-ups. Flexprice already meters contact enrichment, graph queries, and confirmed sends in the Sandbox. Its per-lead ledger lets a team see how many credits it used to research and contact an account. [Metering and cost allocation](docs/architecture.md#feedback-analytics-and-credits)
-
 ## What makes Signal different
 
 - **A reason to act or wait.** A company can match the target industry and still have a Hold verdict. Fit, intent, negative evidence, and source dates stay attached to the account so the rep can inspect that decision.
@@ -92,6 +86,12 @@ Fill the local environment file using the [provider setup](backend/README.md). S
 ```
 
 Open [Signal on localhost](http://localhost:8000) and sign in. On the Profile page, start with the intake chat or enter the product directly. Approve the proposed profile, then open Accounts and include targeted regulatory filings and job postings if needed. Account details show the supporting sources and Neo4j paths. Generate and independently review each outreach step. The Pipeline page tracks Gmail confirmations, controlled-mailbox feedback, rep actions, and conversion data.
+
+## Who pays for Signal
+
+Signal is designed for B2B founders and small sales teams that sell to a specific market. A rep has to piece together company announcements, verified buyer contacts, and outreach history to decide who to contact. Signal keeps that evidence with the draft and pipeline record, so a team can spend less time reconstructing research and trace a deal back to the buying signal that prompted the first message.
+
+The proposed business model is a monthly workspace subscription with included usage credits and paid top-ups. Flexprice already meters contact enrichment, graph queries, and confirmed sends in the Sandbox. Its per-lead ledger lets a team see how many credits it used to research and contact an account. [Metering and cost allocation](docs/architecture.md#feedback-analytics-and-credits)
 
 ## Verify and deploy
 
