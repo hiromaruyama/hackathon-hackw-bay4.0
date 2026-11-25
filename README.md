@@ -2,7 +2,7 @@
 
 Signal helps a B2B founder answer three questions before reaching out to a buyer. Why this company? Why now? Which source supports the opening line? In the HackwithBay demo, GeoFlow sells site-analysis software to renewable energy developers. A rep can follow a project announcement from its public excerpt to a product match, review the resulting email, and see which approved revision moved the deal into the pipeline.
 
-**[Open Signal on Render](https://signal-gtm.onrender.com/)** · [System design and graph queries](docs/architecture.md) · [Sponsor checklist](docs/sponsor-requirements.md). Judges land directly on Home in a private browser copy of the saved GeoFlow workspace. Edits stay in that copy. The app uses its configured live integrations.
+**[Open Signal on Render](https://signal-gtm.onrender.com/)** · [Watch the 2:32 demo](https://drive.google.com/file/d/1PIK9R0OzVHW8Rie1fASEZQz6TQf3v6jD/view) · [System design and graph queries](docs/architecture.md) · [Sponsor checklist](docs/sponsor-requirements.md). Judges land directly on Home in a private browser copy of the saved GeoFlow workspace. Edits stay in that copy. The app uses its configured live integrations.
 
 ## What makes Signal different
 
@@ -53,7 +53,7 @@ The November 24, 2026 hosted audit read existing data. It found **113 distinct c
 | Flexprice bonus | The live Sandbox accepted leads enriched, graph queries evaluated and outreach sent. A low balance blocked the Hunter call. The recorded allocation was 1.15 credits for one lead across the three operations. [Metering and credit tests](backend/tests/test_workflow.py) |
 | Snyk bonus | Main-branch CI runs dependency scans on the Python backend and JavaScript frontend and Snyk Code on the application. The same workflow runs backend tests with Neo4j, frontend lint and a production build. [Verification workflow](.github/workflows/verify.yml) · [Run results](https://github.com/hiromaruyama/hackathon-hackw-bay4.0/actions/runs/45514106527) |
 
-The public repository includes setup, a hosted end-to-end prototype and the system design. The team holds the private **2:32 narrated demo** for judges. It shows intake through dashboard synchronization with simulated provider responses. [Deployment](https://signal-gtm.onrender.com/) · [Architecture document](docs/architecture.md) · [API contract and fixture](docs/api-contract.md)
+The public repository includes setup, a hosted end-to-end prototype and the system design. The walkthrough follows one account from the Home assistant through its knowledge graph to the original buying signal. The Writing Agent uses that evidence to suggest a new email opening, and the account appears in Pipeline under Matched. [Deployment](https://signal-gtm.onrender.com/) · [Architecture document](docs/architecture.md) · [API contract and fixture](docs/api-contract.md)
 
 ## Run locally
 

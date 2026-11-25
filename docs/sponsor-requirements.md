@@ -34,4 +34,4 @@ Nexla also returned five records that saved as citations in Neo4j.
 
 - [Hosted prototype](https://signal-gtm.onrender.com) passed health, authenticated workspace, and Neo4j checks. Judges enter a private copy directly from the public link.
 - [Public source repository](https://github.com/hiromaruyama/hackathon-hackw-bay4.0) includes setup instructions and the [system design](architecture.md).
-- The 2:32 narrated video shows intake, graph matching, cited outreach, review, and pipeline updates with controlled provider responses. Retain the separately verified Gmail receipt and provider evidence for live claims.
+- The [2:32 narrated demo](https://drive.google.com/file/d/1PIK9R0OzVHW8Rie1fASEZQz6TQf3v6jD/view) shows live intake, a matched account’s buyer and cited buying signal, the Writing Agent’s suggested edit, and the matched pipeline record. Retain the separately verified Gmail receipt and provider evidence for live claims.
