@@ -161,15 +161,14 @@ class Workflow:
 
         return self.store.read(view)
 
-    def expansion_source(self, revision: int) -> str:
-        def read_source(graph: GraphTransaction, state: State) -> str:
-            profile = next((item for item in state.icp_versions if item.revision == revision), None)
-            url = source_url(profile.expansion.evidence.url) if profile and profile.expansion else None
-            if not url:
-                raise SignalError('source_unavailable', 'No public source is available for this revision.', 404)
-            return url
+    def expansion_sources(self) -> dict[int, str]:
+        def saved_sources(graph: GraphTransaction, state: State) -> dict[int, str]:
+            return {
+                profile.revision: url for profile in state.icp_versions
+                if profile.expansion and (url := source_url(profile.expansion.evidence.url))
+            }
 
-        return self.store.read(read_source)
+        return self.store.read(saved_sources)
 
     def generate_icp(self, request: ProductInput, actor: str) -> Workspace:
         product = Product(id=stable_id('product', request.name, request.description), **request.model_dump())

@@ -249,8 +249,12 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
         return workspace_flow.generate_icp(body, actor)
 
     @app.get('/api/icp/{revision}/expansion/source')
-    def expansion_source(revision: int, actor: Actor, workspace_flow: ScopedWorkflow) -> RedirectResponse:
-        return RedirectResponse(workspace_flow.expansion_source(revision), status_code=302, headers={'Referrer-Policy': 'no-referrer'})
+    def expansion_source(revision: int, request: Request, actor: Actor) -> RedirectResponse:
+        # Only the numeric lookup key comes from the URL. Destinations come from this session's saved citations.
+        saved_sources = scoped_workflow(request, actor).expansion_sources()
+        if revision not in saved_sources:
+            raise SignalError('source_unavailable', 'No public source is available for this revision.', 404)
+        return RedirectResponse(saved_sources[revision], status_code=302, headers={'Referrer-Policy': 'no-referrer'})
 
     @app.post('/api/icp/approve')
     def approve_icp(body: ApproveIcp, actor: Actor, workspace_flow: ScopedWorkflow) -> Workspace:
