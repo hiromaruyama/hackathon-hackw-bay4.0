@@ -97,7 +97,12 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const ws = await api.workspace();
+      const operator = new URLSearchParams(window.location.search).get("operator") === "1";
+      const ws = operator ? await api.workspace() : await api.openWorkspace();
+      if (operator && ws.private_judging) {
+        setStatus("signin");
+        return;
+      }
       setWorkspace(ws);
       setLoadError(null);
       setStatus("ready");
@@ -139,7 +144,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         return { ok: true };
       } catch (e) {
         const err = e instanceof ApiError ? e : new ApiError(0, "unknown", "Something went wrong. Try again.");
-        if (err.status === 401) setStatus("signin");
+        if (err.status === 401) await refresh();
         if (err.status === 409) {
           toast.warning("This changed since you loaded it. Showing the latest version.");
           await refresh();

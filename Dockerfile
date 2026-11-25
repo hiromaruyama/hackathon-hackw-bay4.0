@@ -8,6 +8,7 @@ RUN npm run build
 
 FROM python:3.12-slim-bookworm AS runtime
 WORKDIR /app/backend
+ENV SIGNAL_PUBLIC_JUDGE_ACCESS=true
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 SIGNAL_STATIC_DIR=/app/frontend/out
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt && useradd --no-create-home --uid 10001 signal

@@ -8,6 +8,8 @@ services:
     healthCheckPath: /api/health
     autoDeployTrigger: checksPass
     envVars:
+      - key: SIGNAL_PUBLIC_JUDGE_ACCESS
+        value: "true"
       - key: SIGNAL_DEMO_PASSWORD
         sync: false
       - key: SIGNAL_SESSION_SECRET

@@ -2,7 +2,7 @@
 
 `GET /api/workspace` and successful workflow mutations return the same `Workspace` object. Use [the example response](workspace.example.json) to build the UI without calling providers. The values are synthetic. The running backend reads the saved workspace from Neo4j.
 
-All workspace and readiness routes require a demo session. Sign in with `POST /api/session`, then send JSON and cookies with requests. For browser writes, the origin must equal `SIGNAL_PUBLIC_ORIGIN` (or Render's external URL). The production UI and API run on the same origin. With Next dev on `http://localhost:3000`, set `SIGNAL_PUBLIC_ORIGIN` to that origin, add `credentials: 'include'` to fetch, and call the API on `http://localhost:8000`. Use the same hostname for both servers.
+Data routes require a signed session. The UI opens a private judge session with `POST /api/workspace/open` when public judging is enabled. The server chooses the workspace from the signed cookie. An operator can authenticate to the original workspace using `POST /api/session`. Send JSON and cookies with subsequent requests. For browser writes, the origin must equal `SIGNAL_PUBLIC_ORIGIN` (or Render's external URL). The production UI and API run on the same origin. With Next dev on `http://localhost:3000`, set `SIGNAL_PUBLIC_ORIGIN` to that origin, add `credentials: 'include'` to fetch, and call the API on `http://localhost:8000`. Use the same hostname for both servers.
 
 ## Routes
 
@@ -14,6 +14,7 @@ All workspace and readiness routes require a demo session. Sign in with `POST /a
 | `DELETE /api/session` | — | `204` and an expired cookie |
 | `GET /api/readiness` | — | Per-provider configuration, Gmail watch activity, and Neo4j connectivity |
 | `GET /api/workspace` | — | `Workspace` |
+| `POST /api/workspace/open` | — | Existing session’s workspace or a new passwordless private copy for this browser. Responds with 401 when operator login is required. |
 | `POST /api/intake/chat` | `{"product":{},"history":[],"message":"We sell site analysis to U.S. solar developers."}` | A short `reply` and a `proposal` of editable product form values. |
 | `POST /api/icp/generate` | `{"description":"…","name":"GeoFlow","capabilities":[],"constraints":[],"customers_and_wins":[],"pricing":null,"contract_value":null}` | Workspace with a proposed ICP |
 | `GET /api/icp/{revision}/expansion/source` | — | Redirects a signed-in user to the saved, validated public citation for that revision. Returns 404 when unavailable. |

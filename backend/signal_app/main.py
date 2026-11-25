@@ -3,9 +3,10 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from threading import Lock
-from time import monotonic
+from time import monotonic, time
 from secrets import compare_digest, token_urlsafe
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -38,9 +39,22 @@ def error_response(code: str, message: str, status: int) -> JSONResponse:
     return JSONResponse({'error': {'code': code, 'message': message}}, status_code=status)
 
 
-def require_actor(request: Request) -> str:
+JUDGE_SESSION_SECONDS = 8 * 60 * 60
+
+
+def session_actor(request: Request) -> str | None:
     actor = request.session.get('actor')
-    if not actor or actor != request.app.state.settings.demo_username:
+    settings = request.app.state.settings
+    if request.session.get('role') == 'judge':
+        if settings.public_judge_access and actor and request.session.get('expires', 0) > time():
+            return actor
+        return None
+    return actor if actor == settings.demo_username else None
+
+
+def require_actor(request: Request) -> str:
+    actor = session_actor(request)
+    if not actor:
         raise SignalError('sign_in_required', 'Sign in to open the demo workspace.', 401)
     return actor
 
@@ -48,35 +62,50 @@ def require_actor(request: Request) -> str:
 Actor = Annotated[str, Depends(require_actor)]
 
 
-class ChatRateLimit:
-    """Caps paid assistant requests per process."""
+class RequestLimit:
+    """Caps paid requests across browser sessions in this worker."""
 
     def __init__(self, limit: int = 20, window_seconds: float = 600):
         self.limit, self.window = limit, window_seconds
         self.issued: deque[float] = deque()
         self.lock = Lock()
 
-    def take(self) -> None:
+    def take(self, code: str = 'chat_rate_limited', message: str = 'The assistant is busy. Try again in a few minutes.') -> None:
         now = monotonic()
         with self.lock:
             while self.issued and now - self.issued[0] > self.window:
                 self.issued.popleft()
             if len(self.issued) >= self.limit:
-                raise SignalError('chat_rate_limited', 'The assistant is busy. Try again in a few minutes.', 429)
+                raise SignalError(code, message, 429)
             self.issued.append(now)
 
 
 def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = None, providers: Providers | None = None) -> FastAPI:
     settings = settings or Settings.load()
-    if settings.session_secret and len(settings.session_secret) < 32:
+    if (settings.public_judge_access or settings.session_secret) and len(settings.session_secret) < 32:
         raise ValueError('SIGNAL_SESSION_SECRET must be at least 32 characters.')
     if settings.demo_username == 'system':
         raise ValueError('SIGNAL_DEMO_USERNAME cannot be the system actor.')
     store = store or Neo4jStore(settings)
     providers = providers or Providers(settings)
     workflow = Workflow(settings, store, providers)
-    chat_limit = ChatRateLimit()
-    assistant_message_limit = ChatRateLimit(limit=20, window_seconds=60)
+
+    def scoped_workflow(request: Request, actor: Actor) -> Workflow:
+        if request.session.get('role') == 'judge':
+            return workflow.for_judge(actor, request.session['expires'])
+        return workflow
+
+    judge_provider_limit = RequestLimit(limit=30, window_seconds=600)
+
+    def paid_actor(request: Request, actor: Actor) -> str:
+        if request.session.get('role') == 'judge':
+            judge_provider_limit.take('judge_rate_limited', 'The demo reached its live request limit. Try again in a few minutes.')
+        return actor
+
+    PaidActor = Annotated[str, Depends(paid_actor)]
+    ScopedWorkflow = Annotated[Workflow, Depends(scoped_workflow)]
+    chat_limit = RequestLimit()
+    assistant_message_limit = RequestLimit(limit=20, window_seconds=60)
     gmail_push = GmailPushAuthenticator(settings, providers.http) if settings.gmail_push_configured else None
 
     async def refresh_public_signals(stop: asyncio.Event) -> None:
@@ -180,8 +209,8 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
         return Response(status_code=204)
 
     @app.get('/api/readiness')
-    def readiness(actor: Actor):
-        gmail_watch_active, gmail_last_push_at = workflow.gmail_watch_status()
+    def readiness(actor: Actor, workspace_flow: ScopedWorkflow):
+        gmail_watch_active, gmail_last_push_at = workspace_flow.gmail_watch_status()
         return {
             'claude_configured': bool(settings.anthropic_api_key), 'tavily_configured': bool(settings.tavily_api_key),
             'hunter_configured': bool(settings.hunter_api_key), 'neo4j_configured': bool(settings.neo4j_uri),
@@ -194,70 +223,83 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
             'chat_configured': settings.chat_configured,
         }
 
+    @app.post('/api/workspace/open')
+    def open_workspace(request: Request) -> Workspace:
+        actor = session_actor(request)
+        if not actor:
+            if not settings.public_judge_access:
+                raise SignalError('sign_in_required', 'Sign in to open the operator workspace.', 401)
+            now = int(time())
+            store.prepare_judging(now)
+            actor = 'judge-' + uuid4().hex
+            request.session.clear()
+            request.session.update(role='judge', actor=actor, expires=now + JUDGE_SESSION_SECONDS)
+        return scoped_workflow(request, actor).workspace()
+
     @app.get('/api/workspace')
-    def workspace(actor: Actor) -> Workspace:
-        return workflow.workspace()
+    def workspace(actor: Actor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.workspace()
 
     @app.post('/api/intake/chat')
-    def intake_chat(body: IntakeChat, actor: Actor) -> IntakeReply:
+    def intake_chat(body: IntakeChat, actor: PaidActor) -> IntakeReply:
         return guide_intake(providers, body)
 
     @app.post('/api/icp/generate')
-    def generate_icp(body: ProductInput, actor: Actor) -> Workspace:
-        return workflow.generate_icp(body, actor)
+    def generate_icp(body: ProductInput, actor: PaidActor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.generate_icp(body, actor)
 
     @app.get('/api/icp/{revision}/expansion/source')
-    def expansion_source(revision: int, actor: Actor) -> RedirectResponse:
-        return RedirectResponse(workflow.expansion_source(revision), status_code=302, headers={'Referrer-Policy': 'no-referrer'})
+    def expansion_source(revision: int, actor: Actor, workspace_flow: ScopedWorkflow) -> RedirectResponse:
+        return RedirectResponse(workspace_flow.expansion_source(revision), status_code=302, headers={'Referrer-Policy': 'no-referrer'})
 
     @app.post('/api/icp/approve')
-    def approve_icp(body: ApproveIcp, actor: Actor) -> Workspace:
-        return workflow.approve_icp(body, actor)
+    def approve_icp(body: ApproveIcp, actor: Actor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.approve_icp(body, actor)
 
     @app.post('/api/discover')
-    def discover(body: DiscoverInput, actor: Actor) -> Workspace:
-        return workflow.discover(body.revision, actor, refresh=body.refresh, deeper_sources=body.deeper_sources)
+    def discover(body: DiscoverInput, actor: PaidActor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.discover(body.revision, actor, refresh=body.refresh, deeper_sources=body.deeper_sources)
 
     @app.post('/api/discover/more')
-    def discover_more(body: MoreDiscoveryInput, actor: Actor) -> Workspace:
-        return workflow.discover_more(body.revision, actor, body.source_domains)
+    def discover_more(body: MoreDiscoveryInput, actor: PaidActor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.discover_more(body.revision, actor, body.source_domains)
 
     @app.post('/api/accounts/{account_id}/enrich')
-    def enrich_account(account_id: str, actor: Actor) -> Workspace:
-        return workflow.enrich_account(account_id, actor)
+    def enrich_account(account_id: str, actor: PaidActor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.enrich_account(account_id, actor)
 
     @app.post('/api/accounts/{account_id}/writing-draft')
-    def create_writing_draft(account_id: str, actor: Actor) -> Workspace:
-        return workflow.create_writing_draft(account_id, actor)
+    def create_writing_draft(account_id: str, actor: Actor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.create_writing_draft(account_id, actor)
 
     @app.post('/api/accounts/{account_id}/draft')
-    def create_draft(account_id: str, actor: Actor) -> Workspace:
-        return workflow.create_draft(account_id, actor)
+    def create_draft(account_id: str, actor: PaidActor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.create_draft(account_id, actor)
 
     @app.get('/api/accounts/{account_id}/insights')
-    def graph_insights(account_id: str, actor: Actor) -> list[GraphInsight]:
-        return workflow.graph_insights(account_id)
+    def graph_insights(account_id: str, actor: Actor, workspace_flow: ScopedWorkflow) -> list[GraphInsight]:
+        return workspace_flow.graph_insights(account_id)
 
     @app.post('/api/accounts/{account_id}/sequence')
-    def create_sequence(account_id: str, actor: Actor) -> Workspace:
-        return workflow.create_sequence(account_id, actor)
+    def create_sequence(account_id: str, actor: PaidActor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.create_sequence(account_id, actor)
 
     @app.patch('/api/drafts/{draft_id}')
-    def edit_draft(draft_id: str, body: EditDraft, actor: Actor) -> Workspace:
-        return workflow.edit_draft(draft_id, body, actor)
+    def edit_draft(draft_id: str, body: EditDraft, actor: Actor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.edit_draft(draft_id, body, actor)
 
     @app.post('/api/drafts/{draft_id}/review')
-    def review_draft(draft_id: str, body: ReviewDraft, actor: Actor) -> Workspace:
-        return workflow.review_draft(draft_id, body, actor)
+    def review_draft(draft_id: str, body: ReviewDraft, actor: PaidActor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.review_draft(draft_id, body, actor)
 
     @app.post('/api/drafts/{draft_id}/send')
-    def send_draft(draft_id: str, body: RevisionInput, actor: Actor) -> Workspace:
-        return workflow.send_draft(draft_id, body.revision, actor)
+    def send_draft(draft_id: str, body: RevisionInput, actor: Actor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.send_draft(draft_id, body.revision, actor)
 
     @app.post('/api/chat/message')
-    def assistant_message(body: AssistantMessage, actor: Actor) -> AssistantReply:
+    def assistant_message(body: AssistantMessage, actor: Actor, workspace_flow: ScopedWorkflow) -> AssistantReply:
         assistant_message_limit.take()
-        return answer_workspace(providers, workflow.workspace(), body)
+        return answer_workspace(providers, workspace_flow.workspace(), body)
 
     @app.post('/api/chat/session')
     def chat_session(actor: Actor):
@@ -266,21 +308,22 @@ def create_app(settings: Settings | None = None, *, store: Neo4jStore | None = N
             raise SignalError('chat_unconfigured', 'Configure ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID.', 503)
         chat_limit.take()
         return {'signed_url': providers.chat_signed_url()}
+
     @app.post('/api/drafts/{draft_id}/schedule')
-    def schedule_draft(draft_id: str, body: ScheduleDraft, actor: Actor) -> Workspace:
-        return workflow.schedule_draft(draft_id, body, actor)
+    def schedule_draft(draft_id: str, body: ScheduleDraft, actor: Actor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.schedule_draft(draft_id, body, actor)
 
     @app.post('/api/drafts/{draft_id}/linkedin-handoff')
-    def prepare_linkedin(draft_id: str, body: RevisionInput, actor: Actor) -> Workspace:
-        return workflow.prepare_linkedin(draft_id, body.revision, actor)
+    def prepare_linkedin(draft_id: str, body: RevisionInput, actor: Actor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.prepare_linkedin(draft_id, body.revision, actor)
 
     @app.post('/api/pipeline/{account_id}/stage')
-    def move_pipeline(account_id: str, body: PipelineChange, actor: Actor) -> Workspace:
-        return workflow.change_pipeline(account_id, body, actor)
+    def move_pipeline(account_id: str, body: PipelineChange, actor: Actor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.change_pipeline(account_id, body, actor)
 
     @app.post('/api/feedback/gmail/sync')
-    def gmail_feedback(actor: Actor) -> Workspace:
-        return workflow.sync_gmail_feedback()
+    def gmail_feedback(actor: PaidActor, workspace_flow: ScopedWorkflow) -> Workspace:
+        return workspace_flow.sync_gmail_feedback()
 
     @app.post(GMAIL_PUSH_PATH, status_code=204, include_in_schema=False)
     async def gmail_webhook(request: Request) -> Response:

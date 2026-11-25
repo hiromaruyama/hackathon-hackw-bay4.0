@@ -394,6 +394,7 @@ class ResearchSchedule(BaseModel):
 
 
 class Workspace(BaseModel):
+    private_judging: bool = False
     product: Product | None
     icp: Icp | None
     approved_icp_revision: int | None

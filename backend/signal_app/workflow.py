@@ -1,4 +1,6 @@
 from collections import Counter
+from copy import copy
+from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from threading import Lock
@@ -95,6 +97,12 @@ class Workflow:
         self._discovery_lock = Lock()
         self._feedback_lock = Lock()
 
+    def for_judge(self, actor: str, expires: int) -> 'Workflow':
+        scoped = copy(self)  # All sessions share the provider clients and operation locks.
+        scoped.store = self.store.for_judge(actor, expires)
+        scoped.settings = replace(self.settings, research_refresh_minutes=0)
+        return scoped
+
     def workspace(self) -> Workspace:
         def view(graph: GraphTransaction, state: State) -> Workspace:
             accounts = []
@@ -132,6 +140,7 @@ class Workflow:
             if self.settings.flexprice_enabled and usage is None:
                 usage = Usage(enrichment_cost=float(self.settings.flexprice_enrichment_cost))
             return Workspace(
+                private_judging=self.store.judge_expires is not None,
                 product=state.product, icp=state.latest_icp, approved_icp_revision=state.approved_icp_revision,
                 accounts=accounts, competitor=state.competitor,
                 competitors=state.competitors or ([state.competitor] if state.competitor else []),
@@ -623,23 +632,29 @@ class Workflow:
             if current.researched_at != account.researched_at:
                 raise SignalError('discovery_changed', 'Refresh the account and use the current research.')
             usage = state.usage or Usage(enrichment_cost=float(cost))
-            if state.billing_wallet != wallet_key or state.billing_remaining is None:
-                state.billing_wallet = wallet_key
-                state.billing_remaining = balance
+            # Private workspaces spend from the same external wallet. Reserve its balance
+            # on the owner in this transaction, while keeping the visitor's usage events private.
+            ledger = GraphTransaction(graph.tx, graph.owner_id) if graph.workspace_id != graph.owner_id else None
+            budget = ledger.state(lock=True) if ledger else state
+            if budget.billing_wallet != wallet_key or budget.billing_remaining is None:
+                budget.billing_wallet = wallet_key
+                budget.billing_remaining = balance
             else:
-                observed = state.billing_balance_observed
-                if observed is None and usage.balance is not None:
-                    observed = Decimal(str(usage.balance))
+                observed = budget.billing_balance_observed
+                if observed is None and budget.usage and budget.usage.balance is not None:
+                    observed = Decimal(str(budget.usage.balance))
                 if observed is not None and balance > observed:
-                    state.billing_remaining += balance - observed
-            state.billing_balance_observed = balance
+                    budget.billing_remaining += balance - observed
+            budget.billing_balance_observed = balance
             # Flexprice meters asynchronously. Preserve in-flight debits while accepting new grants.
-            available = min(balance, state.billing_remaining)
+            available = min(balance, budget.billing_remaining)
             blocked = available < cost
             remaining = available if blocked else available - cost
             event = UsageEvent(id=str(uuid4()), account_id=account.id, operation='leads_enriched',
                                at=utcnow(), status='blocked' if blocked else 'pending')
-            state.billing_remaining = remaining
+            budget.billing_remaining = remaining
+            if ledger:
+                ledger.save_state(budget)
             usage.balance = float(balance)
             usage.available_for_enrichment = float(max(remaining, 0))
             usage.enrichment_cost = float(cost)
@@ -970,9 +985,7 @@ class Workflow:
             if state.leads[draft.account_id].bounced:
                 raise SignalError('previous_bounce', 'Review the delivery failure before sending another message.')
             now = utcnow()
-            window_start = now - timedelta(hours=1)
-            reserved = sum(event.type == 'dispatch_reserved' and event.at > window_start for event in state.activity)
-            if reserved >= self.settings.test_send_limit_per_hour:
+            if not graph.reserve_shared_send(now, self.settings.test_send_limit_per_hour, state):
                 raise SignalError('send_rate_limit', 'The controlled test workspace reached its hourly send limit. Try again later.', 429)
             draft.dispatch = DispatchAttempt(revision=revision, actor=actor, at=now)
             graph.save_draft(draft)

@@ -48,6 +48,9 @@ export function AppShell({ commands, children, fullWidth = false, hasEmbeddedAge
           Signal
         </Link>
         <div className="ml-auto flex items-center gap-3">
+          {showWorkspace && workspace.private_judging ? (
+            <Badge variant="outline" title="Edits are saved in this browser’s private judging workspace.">Private copy</Badge>
+          ) : null}
           {status === "ready" && workspace ? <ActivitySheet /> : null}
           <ThemeToggle />
           {mode === "sample" ? (

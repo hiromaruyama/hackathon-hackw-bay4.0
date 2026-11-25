@@ -247,6 +247,7 @@ export interface Usage {
 }
 
 export interface Workspace {
+  private_judging?: boolean;
   product: Product | null;
   icp: Icp | null;
   approved_icp_revision: number | null;

@@ -16,6 +16,9 @@ cp -n .env.example .env
 
 Fill `backend/.env` locally. The file is ignored by Git. Restart the service after changing credentials. Set a unique `SIGNAL_DEMO_PASSWORD` and a random `SIGNAL_SESSION_SECRET` of at least 32 characters. Leave `SIGNAL_PUBLIC_ORIGIN=http://localhost:8000` to use the static export or API docs locally. For Next dev, use `SIGNAL_PUBLIC_ORIGIN=http://localhost:3000` and send credentialed requests to `http://localhost:8000`.
 
+The judging Docker image enables `SIGNAL_PUBLIC_JUDGE_ACCESS=true`. A first visit opens an eight-hour, cookie-bound private session. Signal takes one consistent snapshot of the operator’s saved state, drafts, and graph when judging first opens. Visitors read that snapshot until their first edit creates a private Neo4j copy. Completed sends remain historical and sendable drafts require fresh approval. Live calls share the configured provider wallet, controlled inbox, and hourly send allowance. Public research, generation, enrichment, review, and feedback actions share a ceiling of 30 requests per ten minutes per server worker. Judges can sync feedback on their own new sends. Scheduled refresh and mailbox push continue on the operator workspace. Expired private copies are reclaimed as new visitors arrive. Open `/?operator=1` for operator sign-in. Clear the site's cookies or use a new browser profile to start a new judging session.
+
+
 | Provider | Required configuration and check |
 | --- | --- |
 | Claude | `ANTHROPIC_API_KEY` with credit and access to `claude-haiku-5-5`. Generate a GeoFlow profile as a smoke check. |

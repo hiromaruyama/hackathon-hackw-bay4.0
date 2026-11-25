@@ -23,6 +23,7 @@ def mailbox(value: str) -> str | None:
 class Settings:
     public_origin: str = 'http://localhost:8000'
     demo_username: str = 'demo'
+    public_judge_access: bool = False
     demo_password: str = field(default='', repr=False)
     session_secret: str = field(default='', repr=False)
     static_dir: Path = BACKEND_ROOT.parent / 'frontend' / 'out'
@@ -126,6 +127,7 @@ class Settings:
 
         return cls(
             public_origin=origin, demo_username=get('SIGNAL_DEMO_USERNAME', 'demo'),
+            public_judge_access=get('SIGNAL_PUBLIC_JUDGE_ACCESS', 'false').lower() == 'true',
             demo_password=get('SIGNAL_DEMO_PASSWORD'), session_secret=get('SIGNAL_SESSION_SECRET'),
             static_dir=Path(get('SIGNAL_STATIC_DIR', str(cls.static_dir))),
             anthropic_api_key=get('ANTHROPIC_API_KEY'), tavily_api_key=get('TAVILY_API_KEY'),

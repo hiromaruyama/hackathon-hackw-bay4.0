@@ -867,3 +867,90 @@ def test_published_fixture_matches_the_api_model():
     example = Path(__file__).resolve().parents[2] / 'docs' / 'workspace.example.json'
     data = Workspace.model_validate_json(example.read_text())
     assert data.accounts[0].draft.test_recipient == 'demo@example.com'
+
+
+def test_passwordless_entry_can_be_disabled(system):
+    client, _ = system
+    post(client, '/api/workspace/open', expected=401)
+    sign_in(client)
+    assert not post(client, '/api/workspace/open')['private_judging']
+
+
+@pytest.mark.parametrize('system', [{'public_judge_access': True, 'test_send_limit_per_hour': 1}], indirect=True)
+def test_private_judges_share_seed_and_provider_limit_but_isolate_changes(system):
+    owner, providers = system
+    providers.advanced_sources = True
+    account_id, draft = prepare_draft(owner)
+    url = f'/api/drafts/{draft["id"]}'
+    insights = f'/api/accounts/{account_id}/insights'
+    def paths(client):
+        return sorted(client.get(insights).json(), key=lambda item: (item['kind'], item['path']))
+
+    original_paths = paths(owner)
+    assert original_paths
+    post(owner, url + '/review', {'revision': 1, 'decision': 'approve'})
+    a, b = (TestClient(owner.app, base_url=ORIGIN) for _ in range(2))
+    assert a.post('/api/workspace/open', headers={'Origin': 'https://elsewhere.example'}).status_code == 403
+    for client in (a, b):
+        assert client.get('/api/workspace').status_code == 401
+        opened = post(client, '/api/workspace/open')
+        assert opened['private_judging'] and opened['accounts'][0]['graph_path']
+        assert opened['accounts'][0]['draft']['review_status'] == 'pending_review'
+        assert paths(client) == original_paths
+    assert a.get('/api/session').json() != b.get('/api/session').json()
+    post(b, url + '/send', {'revision': 1}, 409)
+    edited = a.patch(url, json={'expected_revision': 1, 'subject': 'Private subject', 'body': draft['body']}, headers=HEADERS)
+    assert edited.status_code == 200, edited.text
+    assert post(a, '/api/workspace/open')['accounts'][0]['draft']['subject'] == 'Private subject'
+    assert paths(a) == original_paths
+    assert post(b, '/api/workspace/open')['accounts'][0]['draft']['subject'] == draft['subject']
+    assert post(owner, '/api/workspace/open')['accounts'][0]['draft']['review_status'] == 'approved'
+    post(a, url + '/review', {'revision': 2, 'decision': 'approve'})
+    post(a, url + '/send', {'revision': 2})
+    post(b, url + '/review', {'revision': 1, 'decision': 'approve'})
+    assert post(b, url + '/send', {'revision': 1}, 429)['error']['code'] == 'send_rate_limit'
+    assert post(owner, url + '/send', {'revision': 1}, 429)['error']['code'] == 'send_rate_limit'
+    assert len(providers.sent) == 1
+    assert b.get('/api/workspace').json()['pipeline']['counts']['contacted'] == 0
+
+
+@pytest.mark.parametrize('system', [{'public_judge_access': True, 'flexprice_enabled': True}], indirect=True)
+def test_private_judges_reserve_one_shared_wallet(system):
+    owner, providers = system
+    accounts = discover_accounts(owner)['accounts']
+    route = f'/api/accounts/{accounts[0]["id"]}/enrich'
+    a, b = (TestClient(owner.app, base_url=ORIGIN) for _ in range(2))
+    post(a, '/api/workspace/open')
+    post(b, '/api/workspace/open')
+    post(a, route)
+    assert post(b, route, expected=402)['error']['code'] == 'insufficient_enrichment_credits'
+    assert post(owner, route, expected=402)['error']['code'] == 'insufficient_enrichment_credits'
+    assert len(providers.lookups) == 1
+    assert b.get('/api/workspace').json()['accounts'][0]['enrichment_status'] == 'not_started'
+
+
+@pytest.mark.parametrize('system', [{'public_judge_access': True}], indirect=True)
+def test_expired_judges_reopen_without_login_and_only_their_own_changes_expire(system, monkeypatch):
+    owner, providers = system
+    _, draft = prepare_draft(owner)
+    judge = TestClient(owner.app, base_url=ORIGIN)
+    post(judge, '/api/workspace/open')
+    original_actor = judge.get('/api/session').json()['actor']
+    route = f'/api/drafts/{draft["id"]}'
+    edited = judge.patch(route, json={'expected_revision': 1, 'subject': 'Private edit', 'body': draft['body']}, headers=HEADERS)
+    assert edited.status_code == 200
+    private_app = create_app(replace(owner.app.state.settings, public_judge_access=False), store=providers.store, providers=providers)
+    disabled = TestClient(private_app, base_url=ORIGIN)
+    disabled.cookies.update(judge.cookies)
+    assert disabled.get('/api/workspace').status_code == 401
+    post(disabled, '/api/workspace/open', expected=401)
+    from signal_app import main
+    later = main.time() + main.JUDGE_SESSION_SECONDS + 1
+    monkeypatch.setattr(main, 'time', lambda: later)
+    assert judge.get('/api/workspace').status_code == 401
+    reopened = post(judge, '/api/workspace/open')
+    assert reopened['accounts'][0]['draft']['subject'] == draft['subject']
+    assert judge.get('/api/session').json()['actor'] != original_actor
+    key = providers.store.workspace_id + ':' + original_actor
+    assert providers.store.read(lambda g, _: g.run('MATCH (w:Workspace {id: $id}) RETURN count(w) AS n', id=key).single()['n']) == 0
+    assert owner.get('/api/workspace').json()['accounts'][0]['draft']['subject'] == draft['subject']

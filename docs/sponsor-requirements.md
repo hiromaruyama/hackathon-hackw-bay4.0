@@ -32,6 +32,6 @@ Nexla also returned five records that saved as citations in Neo4j.
 
 ## Submission evidence
 
-- [Hosted prototype](https://signal-gtm.onrender.com) passed health, authenticated workspace, and Neo4j checks. The team shares the demo password privately.
+- [Hosted prototype](https://signal-gtm.onrender.com) passed health, authenticated workspace, and Neo4j checks. Judges enter a private copy directly from the public link.
 - [Public source repository](https://github.com/hiromaruyama/hackathon-hackw-bay4.0) includes setup instructions and the [system design](architecture.md).
 - The 2:32 narrated video shows intake, graph matching, cited outreach, review, and pipeline updates with controlled provider responses. Retain the separately verified Gmail receipt and provider evidence for live claims.

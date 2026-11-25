@@ -41,6 +41,7 @@ export const api = {
   signIn: (password: string) => request<{ actor: string }>("POST", "/api/session", { password }),
   signOut: () => request<void>("DELETE", "/api/session"),
   workspace: () => request<Workspace>("GET", "/api/workspace"),
+  openWorkspace: () => request<Workspace>("POST", "/api/workspace/open"),
   intakeChat: (product: IntakeFields, history: IntakeMessage[], message: string) =>
     request<IntakeReply>("POST", "/api/intake/chat", { product, history, message }),
   generateIcp: (input: IcpGenerateInput) => request<Workspace>("POST", "/api/icp/generate", input),

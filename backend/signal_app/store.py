@@ -1,3 +1,5 @@
+from copy import copy
+from datetime import datetime
 from threading import Lock
 from typing import Callable, TypeVar
 
@@ -14,8 +16,9 @@ Value = TypeVar('Value')
 
 
 class GraphTransaction:
-    def __init__(self, tx: ManagedTransaction, workspace_id: str):
+    def __init__(self, tx: ManagedTransaction, workspace_id: str, owner_id: str | None = None):
         self.tx = tx
+        self.owner_id = owner_id or workspace_id
         self.workspace_id = workspace_id
 
     def run(self, query: str, **parameters):
@@ -32,6 +35,60 @@ class GraphTransaction:
 
     def save_state(self, state: State) -> None:
         self.run('MATCH (w:Workspace {id: $workspace}) SET w.state = $data', data=state.model_dump_json()).consume()
+
+    def copy_workspace(self, source: 'GraphTransaction', *, publish: bool) -> State:
+        """Copy stored graph edges and draft history atomically. Both namespaces are server-selected."""
+        state = source.state()
+        self.run(
+            'MATCH (n {workspace: $source}) WHERE NOT n:Draft '
+            'CREATE (c:$(labels(n))) SET c = properties(n), c.workspace = $workspace '
+            'CREATE (n)-[:SIGNAL_COPY]->(c)',
+            source=source.workspace_id,
+        ).consume()
+        self.run(
+            'MATCH (x {workspace: $workspace})<-[:SIGNAL_COPY]-(a {workspace: $source})-[r]->'
+            '(b {workspace: $source})-[:SIGNAL_COPY]->(y {workspace: $workspace}) '
+            'CREATE (x)-[edge:$(type(r))]->(y) SET edge = properties(r)',
+            source=source.workspace_id,
+        ).consume()
+        self.run('MATCH (n {workspace: $source})-[r:SIGNAL_COPY]->(c {workspace: $workspace}) DELETE r',
+                 source=source.workspace_id).consume()
+        rows = source.run('MATCH (d:Draft {workspace: $workspace}) RETURN d.data AS data')
+        drafts = []
+        for row in rows:
+            draft = Draft.model_validate_json(row['data'])
+            if publish:
+                # Keep completed deliveries as history. A visitor must approve any new delivery.
+                if draft.dispatch:
+                    draft.dispatch.provider_message_id = None
+                elif not draft.prepared_at:
+                    draft.reviews = [r for r in draft.reviews if r.revision != draft.current.revision or r.decision != 'approve']
+                    draft.scheduled_at = None
+            drafts.append(dict(id=draft.id, account=draft.account_id, revision=draft.icp_revision, data=draft.model_dump_json()))
+        self.run('UNWIND $drafts AS item CREATE (d:Draft {workspace: $workspace, id: item.id, '
+                 'account_id: item.account, icp_revision: item.revision, data: item.data})', drafts=drafts).consume()
+        if publish:
+            state.gmail_watch = None
+            state.billing_wallet = state.billing_remaining = state.billing_balance_observed = None
+            state.usage = None
+        self.save_state(state)
+        return state
+
+    def reserve_shared_send(self, now: datetime, limit: int, state: State) -> bool:
+        # The provider sends to one controlled mailbox across all copies. Seed its window on upgrade.
+        key = self.owner_id + ':send-budget'
+        row = self.run('MERGE (b:Workspace {id: $key}) SET b.lock_version = coalesce(b.lock_version, 0) + 1 '
+                       'RETURN b.attempts AS attempts', key=key).single()
+        attempts = row['attempts']
+        if attempts is None:
+            owner = state if self.workspace_id == self.owner_id else GraphTransaction(self.tx, self.owner_id).state()
+            attempts = [e.at.timestamp() for e in owner.activity if e.type == 'dispatch_reserved']
+        recent = [at for at in attempts if at > now.timestamp() - 3600]
+        if len(recent) >= limit:
+            return False
+        self.run('MATCH (b:Workspace {id: $key}) SET b.attempts = $attempts',
+                 key=key, attempts=[*recent, now.timestamp()]).consume()
+        return True
 
     def draft(self, draft_id: str, *, lock: bool = False) -> Draft | None:
         query = 'MATCH (d:Draft {workspace: $workspace, id: $id}) '
@@ -236,6 +293,9 @@ class GraphTransaction:
 class Neo4jStore:
     def __init__(self, settings: Settings, *, workspace_id: str = 'signal-demo'):
         self.database = settings.neo4j_database
+        self.owner_id = workspace_id
+        self.judge_expires: int | None = None
+        self.template_id = workspace_id + ':judge-template'
         self.workspace_id = workspace_id
         self.driver = None
         if settings.neo4j_uri:
@@ -246,6 +306,35 @@ class Neo4jStore:
             )
         self._schema_lock = Lock()
         self._schema_ready = False
+
+    def for_judge(self, actor: str, expires: int) -> 'Neo4jStore':
+        scoped = copy(self)
+        scoped.workspace_id = self.owner_id + ':' + actor
+        scoped.judge_expires = expires
+        return scoped
+
+    def prepare_judging(self, now: int) -> None:
+        def prepare(tx):
+            template = GraphTransaction(tx, self.template_id)
+            row = template.run('MATCH (w:Workspace {id: $workspace}) RETURN w.state IS NOT NULL AS ready').single()
+            if not row or not row['ready']:
+                # Serialize first visitors, then lock the owner for one consistent published snapshot.
+                ready = template.run('MERGE (w:Workspace {id: $workspace}) '
+                                     'SET w.lock_version = coalesce(w.lock_version, 0) + 1 RETURN w.state IS NOT NULL AS ready').single()
+                if not ready['ready']:
+                    owner = GraphTransaction(tx, self.owner_id)
+                    owner.run('MERGE (w:Workspace {id: $workspace}) SET w.lock_version = coalesce(w.lock_version, 0) + 1').consume()
+                    template.copy_workspace(owner, publish=True)
+            template.run('MATCH (w:Workspace {judge_owner: $owner}) WHERE w.judge_expires <= $now '
+                         'WITH w LIMIT 2 OPTIONAL MATCH (n {workspace: w.id}) DETACH DELETE n, w',
+                         owner=self.owner_id, now=now).consume()
+
+        try:
+            with self._require_driver().session(database=self.database) as session:
+                self._prepare_write(session)
+                session.execute_write(prepare)
+        except (Neo4jError, DriverError):
+            raise ProviderError('Neo4j', 'could not open a private judging workspace.', 503) from None
 
     def close(self) -> None:
         if self.driver:
@@ -275,7 +364,13 @@ class Neo4jStore:
 
     def read(self, action: Callable[[GraphTransaction, State], Value]) -> Value:
         def operation(tx):
-            graph = GraphTransaction(tx, self.workspace_id)
+            namespace = self.workspace_id
+            if self.judge_expires is not None:
+                # Read-only visits share an immutable snapshot, including real graph traversals.
+                row = tx.run('MATCH (w:Workspace {id: $id}) RETURN w.id AS id', id=namespace).single()
+                if not row:
+                    namespace = self.template_id
+            graph = GraphTransaction(tx, namespace, self.owner_id)
             return action(graph, graph.state())
 
         try:
@@ -286,8 +381,14 @@ class Neo4jStore:
 
     def write(self, action: Callable[[GraphTransaction, State], Value]) -> Value:
         def operation(tx):
-            graph = GraphTransaction(tx, self.workspace_id)
+            graph = GraphTransaction(tx, self.workspace_id, self.owner_id)
             state = graph.state(lock=True)
+            if self.judge_expires is not None:
+                row = graph.run('MATCH (w:Workspace {id: $workspace}) RETURN w.judge_owner AS owner').single()
+                if not row['owner']:
+                    state = graph.copy_workspace(GraphTransaction(tx, self.template_id), publish=False)
+                    graph.run('MATCH (w:Workspace {id: $workspace}) SET w.judge_owner = $owner, w.judge_expires = $expires',
+                              owner=self.owner_id, expires=self.judge_expires).consume()
             result = action(graph, state)
             graph.save_state(state)
             return result

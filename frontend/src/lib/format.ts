@@ -64,6 +64,7 @@ export function enrichmentText(status: EnrichmentStatus, verification?: string |
 }
 
 export function actorLabel(actor: string) {
+  if (/^judge-[a-f0-9]{32}$/.test(actor)) return "Judge";
   if (actor === "demo") return "Demo rep";
   if (actor === "system") return "Signal";
   return actor;

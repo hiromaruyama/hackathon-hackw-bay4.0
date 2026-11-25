@@ -2,7 +2,7 @@
 
 Signal helps a B2B founder answer three questions before reaching out to a buyer. Why this company? Why now? Which source supports the opening line? In the HackwithBay demo, GeoFlow sells site-analysis software to renewable energy developers. A rep can follow a project announcement from its public excerpt to a product match, review the resulting email, and see which approved revision moved the deal into the pipeline.
 
-**[Open Signal on Render](https://signal-gtm.onrender.com/)** · [System design and graph queries](docs/architecture.md) · [Sponsor checklist](docs/sponsor-requirements.md). The team shares demo credentials privately.
+**[Open Signal on Render](https://signal-gtm.onrender.com/)** · [System design and graph queries](docs/architecture.md) · [Sponsor checklist](docs/sponsor-requirements.md). Judges land directly on Home in a private browser copy of the saved GeoFlow workspace. Edits stay in that copy. The app uses its configured live integrations.
 
 ## What makes Signal different
 
@@ -81,7 +81,7 @@ Open [Signal on localhost](http://localhost:8000) and sign in. On the Profile pa
 - [Backend tests and Render setup](backend/README.md) cover disposable Neo4j, provider configuration, and the single-service deployment.
 - [PLAN.md](PLAN.md) tracks the sponsor requirements and verification evidence.
 
-Set Render secrets through the service's environment settings. The Blueprint uses free Docker compute, the `/api/health` endpoint, and a daily research interval. Set `SIGNAL_RENDER_URL` as a GitHub Actions repository variable to wake a sleeping free service for its scheduled research. Give judges the demo password privately.
+Set Render secrets through the service's environment settings. The Blueprint uses free Docker compute, the `/api/health` endpoint, and a daily research interval. Set `SIGNAL_RENDER_URL` as a GitHub Actions repository variable to wake a sleeping free service for its scheduled research. Judges can use the public URL immediately. The Docker image enables `SIGNAL_PUBLIC_JUDGE_ACCESS`. Set it to `false` for an operator-only deployment. Team members can open `/?operator=1` and enter the operator password to manage the original records.
 
 ### Snyk CI
 
